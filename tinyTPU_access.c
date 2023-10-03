@@ -13,7 +13,7 @@ int32_t write_weight_vector(tpu_vector_t *weight_vector, uint32_t weight_address
 	weight_address <<= (uint32_t)(ceil(log2(TPU_VECTOR_SIZE)));
 
 	for(uint32_t i = 0; i < TPU_VECTOR_SIZE; i+=sizeof(uint32_t)) {
-		WRITE_32(TPU_WEIGHT_BUFFER_BASE+weight_address+i, weight_vector->transfer_vector[i/sizeof(uint32_t)]);
+		WRITE_32(TPU_WEIGHT_BUFFER_BASE + weight_address+i, weight_vector->transfer_vector[i/sizeof(uint32_t)]);
 	}
 
 	return 0;

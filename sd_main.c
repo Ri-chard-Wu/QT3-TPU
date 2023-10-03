@@ -1,6 +1,6 @@
 
 
-#include "tinyTPU_access.h"
+
 #define _GNU_SOURCE
 // #include "platform.h"
 // #include "xil_exception.h"
@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <fcntl.h>
-// #include <ff.h>
+#include "tinyTPU_access.h"
 
 #define WEIGHTS "weights:["
 #define INPUTS "inputs:["
@@ -55,9 +55,9 @@ int main(void) {
 	// 	printf("Error mounting SD card!\n\r");
 	// }
 
-    char *inputFiles[3] = {"weights.txt","inputs.txt","instructions.txt"};
+    char *inputFiles[4] = {"weights.txt","inputs.txt","instructions.txt", "readResultCmds.txt"};
 
-	for(int fidx = 2; fidx < 3; fidx++) {
+	for(int fidx = 0; fidx < 1; fidx++) {
 
         // printf("filename: %s\n", inputFiles[fidx]);
 
@@ -140,9 +140,9 @@ int main(void) {
                     printf("Vector to small!\n\r");
                 }
 
-                // if(write_weight_vector(&vector, weight_addr++)) {
-                // 	printf("Bad address!\n\r");
-                // } 
+                if(write_weight_vector(&vector, weight_addr++)) {
+                	printf("Bad address!\n\r");
+                } 
 
                 if(getline(&message, &messageLen, fp) == -1) {
                     printf("Error reading line!\n\r");
@@ -242,7 +242,7 @@ int main(void) {
                     
 
                     char *str = strtok(message, "[,]");
-                    printf("%d, %d: ", i, idx++);
+                    // printf("%d, %d: ", i, idx++);
                     while(str != NULL) {
                         
                         if(j >= 4) {
@@ -250,7 +250,7 @@ int main(void) {
                         }
 
                         // strtoul: Convert string to unsigned long integer
-                        printf("%ld,", strtoul(str, NULL, 0));
+                        // printf("%ld,", strtoul(str, NULL, 0));
                         switch(j) {
                             case 0:
                                 
@@ -272,7 +272,7 @@ int main(void) {
                         str = strtok(NULL, "[,]");
                     }
 
-                    printf("\n");
+                    // printf("\n");
 
 
                     instructions[i].op_code = op_code;
@@ -321,116 +321,133 @@ int main(void) {
             // }
 
         }
-        // else if(strncmp(RESULTS, message, sizeof(RESULTS)) == 0) {
+        else if(strncmp(RESULTS, message, sizeof(RESULTS)) == 0) {
 
-        // 	if(f_gets(message, sizeof(message), &file) != message) {
-        // 		printf("Error reading line!\n\r");
-        // 	}
+            if(getline(&message, &messageLen, fp) == -1) {
+                printf("Error reading line!\n\r");
+                exit(1);
+            }     
 
-        // 	if ((pos=strchr(message, '\n')) != NULL) *pos = '\0';
-        // 	if ((pos=strchr(message, '\r')) != NULL) *pos = '\0';
+        	if ((pos=strchr(message, '\n')) != NULL) *pos = '\0';
+        	if ((pos=strchr(message, '\r')) != NULL) *pos = '\0';
 
-        // 	FIL result_file;
+        	FILE *result_file;
 
-        // 	FILINFO info;
-        // 	if(f_stat(RESULT_FILE_NAME, &info) == FR_OK) {
-        // 		result = f_open(&result_file, RESULT_FILE_NAME, FA_WRITE);
-        // 	} 
-        // 	else {
-        // 		result = f_open(&result_file, RESULT_FILE_NAME, FA_WRITE | FA_CREATE_ALWAYS);
-        // 	}
+        	// FILINFO info;
+        	// if(f_stat(RESULT_FILE_NAME, &info) == FR_OK) {
+        	// 	// result = fopen(&result_file, RESULT_FILE_NAME, FA_WRITE);
+            //     result_file = fopen(RESULT_FILE_NAME, "r");
 
+        	// } 
+        	// else {
+        	// 	result = f_open(&result_file, RESULT_FILE_NAME, FA_WRITE | FA_CREATE_ALWAYS);
+        	// }
+        	// if(result) {
+        	// 	printf("Error creating file!\n\r");
+        	// }
 
-        // 	if(result) {
-        // 		printf("Error creating file!\n\r");
-        // 	}
-
-
-        // 	if(f_lseek(&result_file, result_file.fsize)) {
-        // 		printf("Error jumping to end of file!\n\r");
-        // 	}
-
-
-        // 	while(strncmp(END, message, sizeof(END)) != 0) {
-
-        // 		uint32_t i = 0;
-
-        // 		uint32_t address;
-        // 		uint32_t length;
-        // 		char append;
-
-        // 		char *str = strtok(message, "[,]");
-
-        // 		while(str != NULL) {
-
-        // 			if(i >= 3) {
-        // 				printf("Out of bounds!\n\r");
-        // 			}
-
-        // 			switch(i) {
-        // 				case 0:
-        // 					address = strtoul(str, NULL, 0);
-        // 					break;
-        // 				case 1:
-        // 					length = strtoul(str, NULL, 0);
-        // 					break;
-        // 				case 2:
-        // 					append = strtoul(str, NULL, 0);
-        // 			}
-
-        // 			i++;
-        // 			str = strtok(NULL, "[,]");
-        // 		}
+            result_file = fopen(RESULT_FILE_NAME, "w");
+            if (result_file == NULL) {
+                printf("Error creating file!\n\r");
+            }
 
 
-        // 		if(!append) {
-        // 			if(f_lseek(&result_file, 0)) {
-        // 				printf("Error jumping to start of file!\n\r");
-        // 			}
-        // 		}
+
+        	// if(fseek(&result_file, result_file.fsize)) {
+        	// 	printf("Error jumping to end!\n\r");
+        	// }
+
+            result = fseek(result_file, 0, SEEK_SET);
+            if(result) {
+                printf("Error jumping to start!\n\r");
+                continue;
+            }
+            
+
+        	while(strncmp(END, message, sizeof(END)) != 0) {
+
+        		uint32_t i = 0;
+
+        		uint32_t address;
+        		uint32_t length;
+        		char append;
+
+        		char *str = strtok(message, "[,]");
+
+        		while(str != NULL) {
+
+        			if(i >= 3) {
+        				printf("Out of bounds!\n\r");
+        			}
+
+        			switch(i) {
+        				case 0:
+        					address = strtoul(str, NULL, 0);
+        					break;
+        				case 1:
+        					length = strtoul(str, NULL, 0);
+        					break;
+        				case 2:
+        					append = strtoul(str, NULL, 0);
+        			}
+
+        			i++;
+        			str = strtok(NULL, "[,]");
+        		}
 
 
-        // 		tpu_vector_t vector;
-        // 		for(uint32_t j = 0; j < length; j++) {
-
-        // 			// if(read_output_vector(&vector, address+j)) {
-        // 			// 	printf("Bad address!\n\r");
-        // 			// } 
-        // 			// else {
-        // 			// 	f_printf(&result_file, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n"
-        // 			// 		, vector.byte_vector[0]
-        // 			// 		, vector.byte_vector[1]
-        // 			// 		, vector.byte_vector[2]
-        // 			// 		, vector.byte_vector[3]
-        // 			// 		, vector.byte_vector[4]
-        // 			// 		, vector.byte_vector[5]
-        // 			// 		, vector.byte_vector[6]
-        // 			// 		, vector.byte_vector[7]
-        // 			// 		, vector.byte_vector[8]
-        // 			// 		, vector.byte_vector[9]
-        // 			// 		, vector.byte_vector[10]
-        // 			// 		, vector.byte_vector[11]
-        // 			// 		, vector.byte_vector[12]
-        // 			// 		, vector.byte_vector[13]
-        // 			// 	);
-        // 			// }
-        // 		}
+        		// if(!append) {
+        		// 	if(f_lseek(&result_file, 0)) {
+        		// 		printf("Error jumping to start of file!\n\r");
+        		// 	}
+        		// }
 
 
-        // 		if(f_gets(message, sizeof(message), &file) != message) {
-        // 			printf("Error reading line!\n\r");
-        // 		}
+        		tpu_vector_t vector;
+        		for(uint32_t j = 0; j < length; j++) {
 
-        // 		if ((pos=strchr(message, '\n')) != NULL) *pos = '\0';
-        // 		if ((pos=strchr(message, '\r')) != NULL) *pos = '\0';
-        // 	}
-        // 	if(f_truncate(&result_file)) {
-        // 		printf("Error truncating file!\n\r");
-        // 	}
-        // 	if(f_close(&result_file)) {
-        // 		printf("Error closing file!\n\r");
-        // 	}
-        // }
+        			// if(read_output_vector(&vector, address+j)) {
+        			// 	printf("Bad address!\n\r");
+        			// } 
+        			// else {
+        			// 	fprintf(result_file, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n"
+        			// 		, vector.byte_vector[0]
+        			// 		, vector.byte_vector[1]
+        			// 		, vector.byte_vector[2]
+        			// 		, vector.byte_vector[3]
+        			// 		, vector.byte_vector[4]
+        			// 		, vector.byte_vector[5]
+        			// 		, vector.byte_vector[6]
+        			// 		, vector.byte_vector[7]
+        			// 		, vector.byte_vector[8]
+        			// 		, vector.byte_vector[9]
+        			// 		, vector.byte_vector[10]
+        			// 		, vector.byte_vector[11]
+        			// 		, vector.byte_vector[12]
+        			// 		, vector.byte_vector[13]
+        			// 	);
+        			// }
+        		}
+
+
+                if(getline(&message, &messageLen, fp) == -1) {
+                    printf("Error reading line!\n\r");
+                    exit(1);
+                }     
+
+        		if ((pos=strchr(message, '\n')) != NULL) *pos = '\0';
+        		if ((pos=strchr(message, '\r')) != NULL) *pos = '\0';
+        	}
+
+
+            
+        	// if(f_truncate(&result_file)) {
+        	// 	printf("Error truncating file!\n\r");
+        	// }
+        	if(fclose(result_file)) {
+        		printf("Error closing file!\n\r");
+        	}
+        }
 
    
     
