@@ -2,7 +2,7 @@
 
 from pynq import MMIO
 import numpy as np
-
+import time
 
 TPU_BASE 				= 0x43C00000
 TPU_WEIGHT_BUFFER_BASE  = 0       # relative to TPU_BASE.
@@ -95,7 +95,7 @@ def write_inputs(fd):
             mmio.write(TPU_UNIFIED_BUFFER_BASE + addr + i, int(data))
 
 
-        print(f"{bufIdx + 2}: {vec}")
+        # print(f"{bufIdx + 2}: {vec}")
 
 
         bufIdx += 1
@@ -133,8 +133,9 @@ def write_instructions(fd):
             
             word = 0
             
-            for b_i in range(3):
+            for b_i in range(4):
                 word = word | (b[4 * w_i + b_i] << (8 * b_i))
+            
             
             mmio.write(TPU_INSTRUCTION_BASE + 0x4 * (w_i + 1), int(word))
 
@@ -143,6 +144,8 @@ def write_instructions(fd):
     
 
 def read_results(fd):
+
+    print("[read_results()]")
 
     result_file_fd = open(RESULT_FILE_NAME, "w")
     line = fd.readline().strip()    
@@ -171,7 +174,7 @@ def read_results(fd):
             
             b = []
             for word in words:
-                b.extend([np.uint8(i) for i in list(word.to_bytes(4, 'little'))])
+                b.extend([np.int8(i) for i in list(word.to_bytes(4, 'little'))])
 
             result_file_fd.write(f"{b[0]},{b[1]},{b[2]},{b[3]},{b[4]},{b[5]},{b[6]},{b[7]},{b[8]},{b[9]},{b[10]},{b[11]},{b[12]},{b[13]}\n")
             
@@ -182,9 +185,9 @@ def read_results(fd):
 
           
 
-# inputFiles = ["weights.txt","inputs.txt","instructions.txt", "readResultCmds.txt"]
-
 inputFiles = ["weights.txt","inputs.txt","instructions.txt", "readResultCmds.txt"]
+
+# inputFiles = ["inputs.txt", "instructions.txt", "readResultCmds.txt"]
 
 for inputFile in inputFiles:
 
@@ -198,6 +201,7 @@ for inputFile in inputFiles:
     elif("instructions:[" in line):
         write_instructions(fd)  
     elif("results:[" in line):
+        time.sleep(2)
         read_results(fd)    
 
 
