@@ -21,7 +21,7 @@ entity data_writer is
 		
 		-- Memory I/F.
 		mem_we          : out std_logic;
-		mem_di          : out std_logic_vector (B-1 downto 0);
+		mem_di          : out std_logic_vector (B-1 downto 0)
     );
 end data_writer;
 
@@ -63,7 +63,7 @@ begin
     	    tvalid_rr   	<= '0';
     	    tvalid_rrr  	<= '0';
 
-			acc_r  	        <= '0';
+			-- acc_r  	        <= '0';
  
     	else
     	    -- Axis registers.

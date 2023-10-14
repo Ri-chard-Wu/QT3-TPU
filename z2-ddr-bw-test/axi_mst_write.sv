@@ -7,7 +7,8 @@ module axi_mst_write
 
 		parameter ID_WIDTH					= 1				,
 		parameter DATA_WIDTH				= 64			,
-		parameter BURST_LENGTH				= 7
+		parameter BURST_LENGTH				= 7,
+		parameter  B_BURST_LENGTH            = 8   
     )
     (
         input	wire						clk   			,
@@ -19,7 +20,7 @@ module axi_mst_write
 		// AXI Master Interface.
 		output	wire	[ID_WIDTH-1:0]		m_axi_awid		,
 		output	wire	[31:0]				m_axi_awaddr	,
-		output	wire	[3:0]				m_axi_awlen		,
+		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_awlen		,
 		output	wire	[2:0]				m_axi_awsize	,
 		output	wire	[1:0]				m_axi_awburst	,
 		output	wire						m_axi_awlock	,

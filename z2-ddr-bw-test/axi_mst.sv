@@ -5,7 +5,8 @@ module axi_mst
 		// Parameters of AXI Master I/F.
 		parameter ID_WIDTH					= 1				,
 		parameter DATA_WIDTH				= 64			,
-		parameter BURST_LENGTH				= 7
+		parameter BURST_LENGTH				= 7,
+		parameter  B_BURST_LENGTH            = 8   
 	)
 	(
 		// Trigger.
@@ -22,7 +23,7 @@ module axi_mst
 		// Write Address Channel.
 		output	wire	[ID_WIDTH-1:0]		m_axi_awid		,
 		output	wire	[31:0]				m_axi_awaddr	,
-		output	wire	[3:0]				m_axi_awlen		,
+		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_awlen		,
 		output	wire	[2:0]				m_axi_awsize	,
 		output	wire	[1:0]				m_axi_awburst	,
 		output	wire						m_axi_awlock	,
@@ -49,7 +50,7 @@ module axi_mst
 		// Read Address Channel.
 		output	wire	[ID_WIDTH-1:0]		m_axi_arid		,
 		output	wire	[31:0]				m_axi_araddr	,
-		output	wire	[3:0]				m_axi_arlen		,
+		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_arlen		,
 		output	wire	[2:0]				m_axi_arsize	,
 		output	wire	[1:0]				m_axi_arburst	,
 		output	wire						m_axi_arlock	,

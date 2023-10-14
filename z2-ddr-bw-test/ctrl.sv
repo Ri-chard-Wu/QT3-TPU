@@ -169,13 +169,13 @@ always_comb begin
         START_ST:
             start_state = 1'b1;
 
-        DECODE_ST
+        DECODE_ST:
             decode_state = 1'b1;
 
         DDR_READ_INIT_ST:
             ddr_read_init_state	= 1'b1;
 
-        DDR_READ_DATA_ST
+        DDR_READ_DATA_ST:
             ddr_read_data_state	= 1'b1;
 
         END_ST:
@@ -188,5 +188,7 @@ end
 assign RSTART_REG  = ddr_read_init_state;	 
 assign RADDR_REG   = start_addr;		
 assign RLENGTH_REG = {{28{1'b0}}, len};
+
+assign start = start_state;
 
 endmodule

@@ -3,7 +3,8 @@ module axi_mst_read
 		// Parameters of AXI Master I/F.
 
 		parameter ID_WIDTH					= 1				,
-		parameter DATA_WIDTH				= 64 			
+		parameter DATA_WIDTH				= 64 		,
+		parameter  B_BURST_LENGTH            = 8   	
 	)
     (
 		input	wire						clk				,
@@ -12,7 +13,7 @@ module axi_mst_read
 		// AXI Master Interface.
 		output	wire	[ID_WIDTH-1:0]		m_axi_arid		,
 		output	wire	[31:0]				m_axi_araddr	,
-		output	wire	[3:0]				m_axi_arlen		,
+		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_arlen		,
 		output	wire	[2:0]				m_axi_arsize	,
 		output	wire	[1:0]				m_axi_arburst	,
 		output	wire						m_axi_arlock	,
@@ -90,7 +91,7 @@ reg					axi_arvalid_i		;
 wire	[31:0]		addr_base			;
 
 // Burst length.
-wire	[3:0]		burst_length		;
+wire	[B_BURST_LENGTH - 1:0]		burst_length		;
 
 /****************/
 /* Architecture */

@@ -17,7 +17,7 @@ module mac
     );
 
 
-reg [B-1 : 0] 	mem_di;
+wire [B-1 : 0] 	mem_di;
 wire            mem_we;
 
 wire signed	[7:0]	byte_arr_signed	[0:7];
