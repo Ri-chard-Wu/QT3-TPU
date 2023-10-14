@@ -74,7 +74,6 @@ reg 				start_state		    ;
 // START_REG resync. 
 // wire				start_reg_resync	;
 
-reg		[31:0]		cnt_read_time ;
 
 // Registers.
 reg		[31:0]		addr_reg_r			;
@@ -113,7 +112,7 @@ fifo_axi
 		.B(DATA_WIDTH	),
 		
 		// Fifo depth.
-		.N(64			)
+		.N(16			)
     )
 	fifo_i
     ( 
@@ -151,7 +150,6 @@ always @(posedge clk) begin
 		// Registers.
 		addr_reg_r	<= 0;
 		len_reg_r	<= 0;
-		cnt_read_time <= 0;
 	end
 	else begin
 		// State register.
@@ -184,11 +182,8 @@ always @(posedge clk) begin
 		if (read_regs_state == 1'b1) begin
 			addr_reg_r	<= ADDR_REG;
 			len_reg_r	<= LENGTH_REG;
-			cnt_read_time <= 0;
 		end
-		else begin
-			cnt_read_time <= cnt_read_time + 1;
-		end
+
 
 	end	
 end

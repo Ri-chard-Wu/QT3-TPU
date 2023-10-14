@@ -5,7 +5,7 @@ module axi_mst
 		// Parameters of AXI Master I/F.
 		parameter ID_WIDTH					= 1				,
 		parameter DATA_WIDTH				= 64			,
-		parameter BURST_SIZE				= 15
+		parameter BURST_LENGTH				= 7
 	)
 	(
 		// Trigger.
@@ -155,6 +155,9 @@ axi_mst_read
 		.RIDLE_REG      (RIDLE_REG      )
     );
 
+
+	
+
 // AXI Master Write.
 // 4-bypes per axi transfer, 
 	// do 16 (BURST_SIZE) axi transfers per burst, 
@@ -163,7 +166,7 @@ axi_mst_write
     #(
 		.ID_WIDTH				(ID_WIDTH				),
 		.DATA_WIDTH				(DATA_WIDTH				),
-		.BURST_SIZE				(BURST_SIZE				)
+		.BURST_LENGTH			(BURST_LENGTH				)
     )
 	axi_mst_write_i
     (

@@ -5,7 +5,7 @@ module ctrl
 		input	wire          rstn	,
         
         input	wire [31:0]   DDR_BASEADDR_REG,
-		input	wire          START_REG     ,
+		input	wire          START_REG       ,
 
 		output	wire          RSTART_REG	,
 		output	wire [31:0]   RADDR_REG		,
@@ -14,7 +14,9 @@ module ctrl
 
 		output	wire          WSTART_REG	,
 		output	wire [31:0]   WADDR_REG		,
-		output	wire [31:0]   WNBURST_REG	
+		output	wire [31:0]   WNBURST_REG	,
+
+        output wire           start
 	);
 
 
@@ -51,9 +53,8 @@ wire inst_fifo_empty;
 reg  init2_state         ;
 reg  start_state        ;
 reg  decode_state        ;
-reg  ddr_read_init_st        ;
-reg  read_regs_state    ;
 reg  ddr_read_init_state;
+reg  ddr_read_data_state;
 reg  end_state          ;
 
 
@@ -122,20 +123,21 @@ always @(posedge clk) begin
 
 		if (init2_state == 1'b1) begin   
             cnt_read_time <= cnt_read_time;
-            rx_cnt_r <= 0;
 		end
         else if (start_state == 1'b1) begin
 			cnt_read_time <= 0;
         end
-		else if (ddr_read_init_st == 1'b1) begin   
-            rx_cnt_r <= rx_cnt_r + 1;
-		end        
 		else begin
 			cnt_read_time <= cnt_read_time + 1;
 		end
-
         
 
+		if (init2_state == 1'b1) begin   
+            rx_cnt_r <= 0;
+		end        
+		else if (ddr_read_init_state == 1'b1) begin   
+            rx_cnt_r <= rx_cnt_r + 1;
+		end        
 
 	end	
 end
@@ -144,16 +146,20 @@ end
 // 0x17D784 == 1562500 == 100e6 / 64, where:  
     // 100e6 is total bytes to read.
     // 64 is number of bytes read in each axi transaction.
-assign inst_fifo_empty = (rx_cnt_r ==  24'h17D784) ? 1'b1 : 1'b0;
+// assign inst_fifo_empty = (rx_cnt_r ==  24'h17D784) ? 1'b1 : 1'b0;
+
+assign inst_fifo_empty = 1'b1;
+
 
 
 always_comb begin
 	
-    init2_state = 1'b0;
-    start_state	= 1'b0;
-	read_regs_state	= 1'b0;
+    init2_state         = 1'b0;
+    start_state         = 1'b0;
+    decode_state	    = 1'b0;
     ddr_read_init_state	= 1'b0;
-    end_state = 1'b0;
+    ddr_read_data_state	= 1'b0;
+    end_state           = 1'b0;
 
     case (state) 
                  
@@ -166,14 +172,11 @@ always_comb begin
         DECODE_ST
             decode_state = 1'b1;
 
-        DDR_READ_INIT_ST
-            ddr_read_init_st  = 1'b1;
-
-		READ_REGS_ST:
-			read_regs_state	= 1'b1;
-
         DDR_READ_INIT_ST:
             ddr_read_init_state	= 1'b1;
+
+        DDR_READ_DATA_ST
+            ddr_read_data_state	= 1'b1;
 
         END_ST:
             end_state	= 1'b1;

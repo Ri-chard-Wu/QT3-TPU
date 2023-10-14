@@ -1,13 +1,13 @@
 
 
-// 4-bypes per axi transfer, do 16 (BURST_SIZE) axi transfers per burst, do NBURST_REG number of bursts per trigger.
+// 4-bypes per axi transfer, do 16 (BURST_LENGTH) axi transfers per burst, do NBURST_REG number of bursts per trigger.
 
 module axi_mst_write
     #(
 
 		parameter ID_WIDTH					= 1				,
 		parameter DATA_WIDTH				= 64			,
-		parameter BURST_SIZE				= 15
+		parameter BURST_LENGTH				= 7
     )
     (
         input	wire						clk   			,
@@ -59,7 +59,7 @@ module axi_mst_write
 // BYTES_PER_AXI_TRANSFER: in byte.
 // DATA_WIDTH: in bits.
 localparam BYTES_PER_AXI_TRANSFER	= DATA_WIDTH / 8; 
-localparam BYTES_PER_BURST			= (BURST_SIZE + 1) * BYTES_PER_AXI_TRANSFER;
+localparam BYTES_PER_BURST			= (BURST_LENGTH + 1) * BYTES_PER_AXI_TRANSFER;
 
 /*************/
 /* Internals */
@@ -175,7 +175,7 @@ assign s_axis_tready 	= ~fifo_full;
 assign m_axi_awid	= 0;
 
 // Burst size (transactions).
-assign m_axi_awlen	= BURST_SIZE;
+assign m_axi_awlen	= BURST_LENGTH;
 
 // Size set to transfer complete data bits per beat.
 assign m_axi_awsize	=	(BYTES_PER_AXI_TRANSFER == 1	)?	3'b000	:
@@ -257,8 +257,8 @@ always @(posedge clk) begin
 				if (m_axi_awready == 1'b1)
 					state <= DATA_ST;
 
-			DATA_ST: // perform BURST_SIZE number of axi transfers. 
-				if (  (m_axi_wready == 1'b1) && (m_axi_wvalid == 1'b1) && (cnt_burst == BURST_SIZE) )
+			DATA_ST: // perform BURST_LENGTH number of axi transfers. 
+				if (  (m_axi_wready == 1'b1) && (m_axi_wvalid == 1'b1) && (cnt_burst == BURST_LENGTH) )
 					state <= RESP_ST;
 
 			RESP_ST: // wait response from slave
@@ -266,7 +266,7 @@ always @(posedge clk) begin
 					state <= NBURST_ST;
 
 			NBURST_ST: // repeat the transfer steps above if not yet 
-									// performed nburst_reg_r number of BURST_SIZE-axi-transfers.
+									// performed nburst_reg_r number of BURST_LENGTH-axi-transfers.
 				if (cnt_nburst == nburst_reg_r)
 					state <= TRIGGER_END_ST;
 				else
@@ -300,14 +300,14 @@ always @(posedge clk) begin
 		end
 
 		// Burst counter
-		// Count the number of axi transfers up to BURST_SIZE.
+		// Count the number of axi transfers up to BURST_LENGTH.
 		// In each axi transfer BYTES_PER_AXI_TRANSFER number of bytes is sent.
 		if (addr_state == 1'b1)
 			cnt_burst	<= 0;
 		else if (m_axi_wvalid == 1'b1 && m_axi_wready == 1'b1)
 			cnt_burst <= cnt_burst + 1;
 
-		// count the number of BURST_SIZE-axi-transfer.
+		// count the number of BURST_LENGTH-axi-transfer.
 		if (read_regs_state == 1'b1)
 			cnt_nburst <= 0;
 		else if (m_axi_bvalid == 1'b1 && m_axi_bready == 1'b1)
@@ -361,7 +361,7 @@ assign m_axi_awaddr		= addr_r;
 assign m_axi_awvalid	= addr_state;
 
 assign m_axi_wdata		= fifo_dout_r;
-assign m_axi_wlast		= (cnt_burst == BURST_SIZE)? 1'b1 : 1'b0;
+assign m_axi_wlast		= (cnt_burst == BURST_LENGTH)? 1'b1 : 1'b0;
 assign m_axi_wvalid		= ~fifo_empty_r & data_state;
 
 assign m_axi_bready		= resp_state;
