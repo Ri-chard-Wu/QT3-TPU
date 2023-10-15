@@ -4,6 +4,7 @@ module axi_mst_read
 
 		parameter ID_WIDTH					= 6				,
 		parameter DATA_WIDTH				= 64 		,
+		parameter BURST_LENGTH				= 7,
 		parameter  B_BURST_LENGTH            = 4   	
 	)
     (
@@ -40,7 +41,7 @@ module axi_mst_read
 		// Registers.
 		input	wire						START_REG		,
 		input	wire	[31:0]				ADDR_REG		,
-		input	wire	[31:0]				LENGTH_REG		,
+		input	wire	[31:0]				NBURST_REG,
 		output	wire                        RIDLE_REG  	,
 
 		output wire [5 * 32 - 1:0] probe
@@ -50,19 +51,15 @@ module axi_mst_read
 /* Internals */
 /*************/
 
-// Maximum burst size (4kB boundary).
-
-// BYTES_PER_AXI_TRANSFER: in byte.
-// DATA_WIDTH: in bits.
-localparam BYTES_PER_AXI_TRANSFER	= DATA_WIDTH / 8;
-
 
 // States.
 typedef enum	{	INIT_ST			,
 					START_ST		,
 					READ_REGS_ST	,
+					INCR_ADDR_ST    ,
 					ADDR_ST			,
 					DATA_ST			,
+					NBURST_ST       ,
 					END_ST
 				} state_t;
 
@@ -76,18 +73,21 @@ reg [31:0] pv_3;
 
 
 // FSM Signals.
-reg read_regs_state		;
 reg start_state		    ;
-reg data_state ;
-reg end_state  ;
+reg read_regs_state		;
+reg incr_addr_state     ;
+reg data_state          ;
+reg end_state           ;
 
-// START_REG resync. 
-// wire				start_reg_resync	;
 
 
 // Registers.
 reg		[31:0]		addr_reg_r			;
-reg		[31:0]		len_reg_r	        ;
+reg		[31:0]		nburst_reg_r	    ;
+
+reg		[31:0]		cnt_nburst    	    ;
+wire    [31:0]		addr_acc	        ;
+
 
 // Fifo.
 wire				fifo_full			;
@@ -96,24 +96,11 @@ wire				fifo_empty			;
 // AXI Master.
 reg					axi_arvalid_i		;
 
-// Address.
-wire	[31:0]		addr_base			;
-
-// Burst length.
-wire	[B_BURST_LENGTH - 1:0]		burst_length		;
 
 /****************/
 /* Architecture */
 /****************/
 
-// // start_reg_resync.
-// synchronizer_n start_reg_resync_i
-// 	(
-// 		.rstn	    (rstn				),
-// 		.clk 		(clk				),
-// 		.data_in	(START_REG			),
-// 		.data_out	(start_reg_resync	)
-// 	);
 
 // Single-clock fifo.
 fifo_axi
@@ -145,11 +132,11 @@ fifo_axi
 assign m_axi_rready		= ~fifo_full;
 assign m_axis_tvalid	= ~fifo_empty;
 
-// Burst lenth.
-assign burst_length		= len_reg_r - 1;
 
-// Base address.
-assign addr_base		= addr_reg_r;
+localparam BYTES_PER_AXI_TRANSFER	= DATA_WIDTH / 8; 
+localparam BYTES_PER_BURST			= (BURST_LENGTH + 1) * BYTES_PER_AXI_TRANSFER;
+
+assign addr_acc	= addr_reg_r + BYTES_PER_BURST;
 
 // Registers.
 always @(posedge clk) begin
@@ -158,8 +145,9 @@ always @(posedge clk) begin
 		state		<= INIT_ST;
 		
 		// Registers.
-		addr_reg_r	<= 0;
-		len_reg_r	<= 0;
+		addr_reg_r	    <= 0;
+		nburst_reg_r	<= 0;
+		cnt_nburst      <= 0;
 
 		pv_1	<= 0;
 		pv_2	<= 0;
@@ -175,15 +163,25 @@ always @(posedge clk) begin
 				if (START_REG == 1'b1)
 					state <= READ_REGS_ST;
 
-			READ_REGS_ST:
+			READ_REGS_ST: // latch addr and assign to m_axi_araddr, and latch nburst.
 				state <= ADDR_ST;
 
-			ADDR_ST:
+			INCR_ADDR_ST: // latch the incrmented addr and assign to m_axi_araddr.
+				state <= ADDR_ST;
+
+			ADDR_ST: // set m_axi_arvalid to 1 and wait slave to be ready.
 				if (m_axi_arready == 1'b1)
 					state <= DATA_ST;
-			DATA_ST:
+					
+			DATA_ST: // read data.
 				if (m_axi_rvalid == 1'b1 && m_axi_rlast == 1'b1 && fifo_full == 1'b0)
+					state <= NBURST_ST;
+
+			NBURST_ST: // check whether have more read bursts to perform.		 	
+				if (cnt_nburst == nburst_reg_r)
 					state <= END_ST;
+				else
+					state <= INCR_ADDR_ST;
 
 			END_ST:
 				if (START_REG == 1'b0)
@@ -194,31 +192,24 @@ always @(posedge clk) begin
 
 		// Registers.
 		if (read_regs_state == 1'b1) begin
-			addr_reg_r	<= ADDR_REG;
-			len_reg_r	<= LENGTH_REG;
+			pv_1 <= pv_1;
+			addr_reg_r	    <= ADDR_REG;
+			nburst_reg_r	<= NBURST_REG;
 		end
-		// else if (axi_arvalid_i == 1'b1) begin
-		// 	pv_1 <= pv_1;
-		// end
-		// else if (data_state == 1'b1) begin
-		// 	pv_1 <= pv_1 + 1;
-		// end
-		if (end_state == 1'b1) begin
-			pv_2 <= pv_2 + 1;
-		end	
+		else if (incr_addr_state == 1'b1) begin
+			pv_1 <= pv_1 + 1;
+			addr_reg_r	    <= addr_acc;
+			nburst_reg_r	<= nburst_reg_r;
+		end
 
 
+		if (read_regs_state == 1'b1)
+			cnt_nburst <= 0;
+		else if (m_axi_rvalid == 1'b1 && m_axi_rlast == 1'b1 && fifo_full == 1'b0)
+			cnt_nburst <= cnt_nburst + 1;	
 
-
-		if(m_axi_arready == 1'b1) begin
-			pv_1 <= m_axi_araddr;
-		end	
-
-
-		if(m_axi_rvalid == 1'b1) begin
-			
+		if (end_state == 1'b1)
 			pv_3 <= pv_3 + 1;
-		end
 
 	end	
 end
@@ -228,7 +219,7 @@ end
 assign m_axi_arid	= 6'b000000;
 
 // Burst length (must substract 1).
-assign m_axi_arlen	= burst_length;
+assign m_axi_arlen	= BURST_LENGTH;
 
 // Size set to transfer complete data bits per beat (64 bytes/transfer).
 assign m_axi_arsize	=	(BYTES_PER_AXI_TRANSFER == 1	)?	3'b000	:
@@ -262,6 +253,7 @@ always_comb begin
 	// Default.
 	start_state	    = 1'b0;
 	read_regs_state	= 1'b0;
+	incr_addr_state	= 1'b0;
 	axi_arvalid_i	= 1'b0;
 	data_state = 1'b0;
 	end_state  = 1'b0;
@@ -275,6 +267,9 @@ always_comb begin
 		READ_REGS_ST:
 			read_regs_state	= 1'b1;
 
+		INCR_ADDR_ST:
+			incr_addr_state	= 1'b1;
+
 		ADDR_ST:
 			axi_arvalid_i	= 1'b1;
 
@@ -287,7 +282,7 @@ always_comb begin
 end
 
 // Assign outputs.
-assign m_axi_araddr	 = addr_base;
+assign m_axi_araddr	 = addr_reg_r;
 assign m_axi_arvalid = axi_arvalid_i;
 
 assign m_axis_tstrb	 = '1;
@@ -296,8 +291,8 @@ assign m_axis_tlast	 = 1'b0;
 assign RIDLE_REG = start_state;
 
 
-assign probe[2 * 32 +: 32] = pv_1; // reg7
-assign probe[3 * 32 +: 32] = pv_2; // reg8
-assign probe[4 * 32 +: 32] = pv_3; // reg9
+// assign probe[2 * 32 +: 32] = pv_1; // reg7
+assign probe[3 * 32 +: 32] = cnt_nburst; // reg8
+// assign probe[4 * 32 +: 32] = pv_3; // reg9
 endmodule
 

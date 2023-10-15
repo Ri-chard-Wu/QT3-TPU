@@ -90,7 +90,7 @@ module axi_mst
 
 		input	wire						RSTART_REG		,
 		input	wire	[31:0]				RADDR_REG		,
-		input	wire	[31:0]				RLENGTH_REG		,
+		input	wire	[31:0]				RNBURST_REG		,
 		output	wire                        RIDLE_REG  	,
 
 		input	wire						WSTART_REG		,
@@ -116,6 +116,7 @@ axi_mst_read
 		
 		.ID_WIDTH				(ID_WIDTH				),
 		.DATA_WIDTH				(DATA_WIDTH				),
+		.BURST_LENGTH			(BURST_LENGTH			),
 		.B_BURST_LENGTH         (B_BURST_LENGTH)
     )
 	axi_mst_read_i
@@ -153,7 +154,7 @@ axi_mst_read
 		// Registers.
 		.START_REG		(RSTART_REG		),
 		.ADDR_REG		(RADDR_REG		),
-		.LENGTH_REG		(RLENGTH_REG	),
+		.NBURST_REG		(RNBURST_REG	),
 		.RIDLE_REG      (RIDLE_REG      ),
 
 		.probe (probe)

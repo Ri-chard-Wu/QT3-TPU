@@ -37,6 +37,7 @@ module axi_slv
 		output	wire            START_REG       ,
     input	  wire  [31:0]    PARTIAL_SUM_REG ,
 
+    output wire [2 * 32 - 1:0] stimulus,
     input wire [5 * 32 - 1:0] probe
 );
 
@@ -326,7 +327,9 @@ end
 
 assign START_REG = slv_reg0[0];
 assign DDR_BASEADDR_REG	= slv_reg1[31:0];
-      
+
+assign stimulus[0 * 32 +: 32]	= slv_reg3[31:0]; 
+assign stimulus[1 * 32 +: 32]	= slv_reg4[31:0]; 
 
 
 

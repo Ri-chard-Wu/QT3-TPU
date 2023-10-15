@@ -2,11 +2,12 @@
 
 module qt3_tpu_v1
 	#(
-		// Parameters of AXI Master I/F.
-		// parameter TARGET_SLAVE_BASE_ADDR	= 32'h20000000	,
+		parameter PMEM_N		            = 32             ,
 		parameter ID_WIDTH					= 6				,
 		parameter DATA_WIDTH				= 64			,
-		parameter BURST_LENGTH				= 7				,
+
+		// max can go up to 15? test it.
+		parameter BURST_LENGTH				= 7				, 
 
 		// z2 only support 4, but in simulation we must use 8.
 		parameter  B_BURST_LENGTH            = 4             
@@ -14,6 +15,9 @@ module qt3_tpu_v1
 	( 	
 		// Trigger.
 		input	wire						trigger			,
+
+		output	wire [PMEM_N-1:0]	        pmem_addr       ,   
+		input	wire [63:0]			        pmem_do         ,
 
 		/***********************************/
 		/* AXI4-Lite Slave I/F for configuration */
@@ -169,7 +173,7 @@ wire            START_REG;
 
 wire			RSTART_REG	;
 wire	[31:0]	RADDR_REG	;
-wire	[31:0]	RLENGTH_REG	;
+wire	[31:0]	RNBURST_REG	;
 wire            RIDLE_REG   ;
 
 wire			WSTART_REG	;
@@ -181,6 +185,8 @@ wire	[31:0]	WNBURST_REG	;
 wire        start;
 wire [31:0] partial_sum;
 
+
+wire [2 * 32 - 1:0] stimulus;
 wire [5 * 32 - 1:0] probe;
 
 /**********************/
@@ -225,14 +231,26 @@ axi_slv axi_slv_i
 		.DDR_BASEADDR_REG (DDR_BASEADDR_REG),
 		.START_REG        (START_REG       ),
 		.PARTIAL_SUM_REG  (partial_sum     ),
+
+		.stimulus (stimulus),
 		.probe (probe)
 	);
 
 
-ctrl ctrl_i
+// assign pmem_addr = stimulus[PMEM_N-1:0]; // reg3
+// assign probe[2 * 32 +: 32] = pmem_do[63:32]; // reg7
+// assign probe[4 * 32 +: 32] = pmem_do[31:0];  // reg9
+
+ctrl #(
+		.PMEM_N         (PMEM_N         )
+	)
+	ctrl_i
 	(
 		.clk		    (aclk			),
 		.rstn         	(aresetn		),
+
+		.pmem_addr      (pmem_addr        ),
+		.pmem_do        (pmem_do          ),
 
 		.DDR_BASEADDR_REG(DDR_BASEADDR_REG),
 
@@ -240,7 +258,7 @@ ctrl ctrl_i
 
 		.RSTART_REG		(RSTART_REG		),
 		.RADDR_REG		(RADDR_REG		),
-		.RLENGTH_REG	(RLENGTH_REG	),
+		.RNBURST_REG	(RNBURST_REG	),
 		.RIDLE_REG      (RIDLE_REG      ),
 
 		.WSTART_REG		(WSTART_REG		),
@@ -369,7 +387,7 @@ axi_mst
 		// Registers.
 		.RSTART_REG		(RSTART_REG		),
 		.RADDR_REG		(RADDR_REG		),
-		.RLENGTH_REG	(RLENGTH_REG	),
+		.RNBURST_REG	(RNBURST_REG	),
 		.RIDLE_REG      (RIDLE_REG      ),
 
 		.WSTART_REG		(WSTART_REG		),
