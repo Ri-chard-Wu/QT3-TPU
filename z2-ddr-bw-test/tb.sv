@@ -14,6 +14,10 @@ parameter B_BURST_LENGTH				= 8;
 /***********************************/
 /* AXI Slave I/F for configuration */
 /***********************************/
+
+reg [9:0]           pmem_addr;
+reg [63:0]          pmem_do;
+
 reg  				s_axi_aclk		;
 reg  				s_axi_aresetn	;
 
@@ -199,6 +203,7 @@ axi_mst_0 axi_mst_0_i
 	);
 
 
+
 // DUT.
 qt3_tpu_v1
 	#(
@@ -214,6 +219,11 @@ qt3_tpu_v1
 		/***********************************/
 		/* AXI Slave I/F for configuration */
 		/***********************************/
+
+		.pmem_addr       ,
+		.pmem_do         ,
+
+
 		.s_axi_aclk		,
 		.s_axi_aresetn	,
 
@@ -334,9 +344,6 @@ initial begin
 
 	#1000;
 
-	/**************************/
-	/* Write data into memory */
-	/**************************/
 	// DDR_BASEADDR_REG.
 	axi_mst_0_agent.AXI4LITE_WRITE_BURST(4*1, prot, 32'h40000000, resp);
 
@@ -351,7 +358,7 @@ initial begin
 	#15000; // in ns.
 
 
-	// START_REG.
+	// read results.
 	axi_mst_0_agent.AXI4LITE_READ_BURST(4*2, prot, data, resp);
 
     $display("partial sum: 0x%04X", data);

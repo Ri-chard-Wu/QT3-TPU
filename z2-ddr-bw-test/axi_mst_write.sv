@@ -52,7 +52,8 @@ module axi_mst_write
 		// Registers.
 		input	wire						START_REG		,
 		input	wire	[31:0]				ADDR_REG		,
-		input	wire	[31:0]				NBURST_REG
+		input	wire	[31:0]				NBURST_REG,
+        input	wire           				IDLE_REG  	
     );
 
 // Maximum burst size (4kB boundary).
@@ -76,7 +77,6 @@ typedef enum 	{	INIT_ST			,
                 	DATA_ST			,
                 	RESP_ST			,
 					NBURST_ST		,
-					TRIGGER_END_ST	,
 					END_ST
 				} state_t;
 
@@ -84,6 +84,7 @@ typedef enum 	{	INIT_ST			,
 (* fsm_encoding = "one_hot" *) state_t state;
 
 // FSM Signals.
+reg 						init_state          ;
 reg 						read_regs_state		;
 reg 						init_addr_state		;
 reg 						incr_addr_state		;
@@ -91,11 +92,7 @@ reg							addr_state			;
 reg							data_state			;
 reg							resp_state			;
 
-// trigger resync.
-wire						trigger_resync		;
 
-// START_REG resync. 
-wire						start_reg_resync	;
 
 // Registers.
 reg		[31:0]				addr_reg_r			;
@@ -122,23 +119,8 @@ reg		[31:0]				cnt_nburst			;
 /* Architecture */
 /****************/
 
-// trigger_resync.
-synchronizer_n trigger_resync_i
-	(
-		.rstn	    (rstn			),
-		.clk 		(clk			),
-		.data_in	(trigger		),
-		.data_out	(trigger_resync	)
-	);
 
-// start_reg_resync.
-synchronizer_n start_reg_resync_i
-	(
-		.rstn	    (rstn				),
-		.clk 		(clk				),
-		.data_in	(START_REG			),
-		.data_out	(start_reg_resync	)
-	);
+
 
 // Single-clock fifo.
 fifo_axi
@@ -200,7 +182,7 @@ assign m_axi_awlock	 	= 2'b00;
 assign m_axi_awcache	= 4'b0000;
 
 // Data, non-secure, unprivileged.
-assign m_axi_awprot		= 3'b010;
+assign m_axi_awprot		= 3'b000;
 
 
 // Not-used qos.
@@ -237,13 +219,9 @@ always @(posedge clk) begin
 		// State register.
 		case (state)
 			INIT_ST:
-				if (start_reg_resync == 1'b1)
-					state <= TRIGGER_ST;
-
-			TRIGGER_ST:
-				if (trigger_resync == 1'b1)
+				if (START_REG == 1'b1)
 					state <= READ_REGS_ST;
-		
+
 			READ_REGS_ST: // latch ADDR_REG & NBURST_REG and compute addr_base.
 				state <= INIT_ADDR_ST;
 
@@ -268,16 +246,12 @@ always @(posedge clk) begin
 			NBURST_ST: // repeat the transfer steps above if not yet 
 									// performed nburst_reg_r number of BURST_LENGTH-axi-transfers.
 				if (cnt_nburst == nburst_reg_r)
-					state <= TRIGGER_END_ST;
+					state <= END_ST;
 				else
 					state <= INCR_ADDR_ST;
 
-			TRIGGER_END_ST:
-				if (trigger_resync == 1'b0)
-					state <= END_ST;
-
 			END_ST:
-				if (start_reg_resync == 1'b0)
+				if (START_REG == 1'b0)
 					state <= INIT_ST;
 		endcase
 		
@@ -312,12 +286,16 @@ always @(posedge clk) begin
 			cnt_nburst <= 0;
 		else if (m_axi_bvalid == 1'b1 && m_axi_bready == 1'b1)
 			cnt_nburst <= cnt_nburst + 1;
+
     end
 end
+
+
 
 // FSM outputs.
 always_comb begin
 	// Default.
+	init_state		    = 1'b0;
 	read_regs_state		= 1'b0;
 	init_addr_state		= 1'b0;
 	incr_addr_state		= 1'b0;
@@ -326,9 +304,8 @@ always_comb begin
 	resp_state			= 1'b0;
 
     case (state)
-		//INIT_ST:
-
-		//TRIGGER_ST:
+		INIT_ST:
+			init_state = 1'b1;
 
 		READ_REGS_ST:
 			read_regs_state	= 1'b1;
@@ -348,11 +325,6 @@ always_comb begin
 		RESP_ST:
 			resp_state		= 1'b1;
 
-		//NBURST_ST:
-
-		//TRIGGER_END_ST:
-		
-		//END_ST:
     endcase
 end
 
@@ -366,6 +338,7 @@ assign m_axi_wvalid		= ~fifo_empty_r & data_state;
 
 assign m_axi_bready		= resp_state;
 
+assign IDLE_REG = init_state;
 
 endmodule
 

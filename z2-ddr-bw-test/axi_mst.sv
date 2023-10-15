@@ -9,8 +9,6 @@ module axi_mst
 		parameter  B_BURST_LENGTH            = 4   
 	)
 	(
-		// Trigger.
-		input	wire						trigger			,
 
 		/**************/
 		/* AXI Master */
@@ -96,6 +94,7 @@ module axi_mst
 		input	wire						WSTART_REG		,
 		input	wire	[31:0]				WADDR_REG		,
 		input	wire	[31:0]				WNBURST_REG,
+        input	wire           				WIDLE_REG  	,		
 
 		output wire [5 * 32 - 1:0] probe
 	);
@@ -155,7 +154,7 @@ axi_mst_read
 		.START_REG		(RSTART_REG		),
 		.ADDR_REG		(RADDR_REG		),
 		.NBURST_REG		(RNBURST_REG	),
-		.RIDLE_REG      (RIDLE_REG      ),
+		.IDLE_REG       (RIDLE_REG      ),
 
 		.probe (probe)
     );
@@ -164,9 +163,6 @@ axi_mst_read
 	
 
 // AXI Master Write.
-// 4-bypes per axi transfer, 
-	// do 16 (BURST_SIZE) axi transfers per burst, 
-	// do NBURST_REG number of bursts per trigger.
 axi_mst_write
     #(
 		.ID_WIDTH				(ID_WIDTH				),
@@ -178,9 +174,6 @@ axi_mst_write
     (
 		.clk   			(m_axi_aclk		),
 		.rstn 			(m_axi_aresetn	),
-
-		// Trigger.
-		.trigger		(trigger		),
 
 		// AXI Master Interface.
 		.m_axi_awid		(m_axi_awid		),
@@ -217,7 +210,8 @@ axi_mst_write
 		// Registers.
 		.START_REG		(WSTART_REG		),
 		.ADDR_REG		(WADDR_REG		),
-		.NBURST_REG		(WNBURST_REG	)
+		.NBURST_REG		(WNBURST_REG	),
+		.IDLE_REG    	(WIDLE_REG	)		
     );
 
 endmodule

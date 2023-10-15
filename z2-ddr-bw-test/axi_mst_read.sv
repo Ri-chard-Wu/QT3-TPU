@@ -42,7 +42,7 @@ module axi_mst_read
 		input	wire						START_REG		,
 		input	wire	[31:0]				ADDR_REG		,
 		input	wire	[31:0]				NBURST_REG,
-		output	wire                        RIDLE_REG  	,
+		output	wire                        IDLE_REG  	,
 
 		output wire [5 * 32 - 1:0] probe
     );
@@ -288,7 +288,7 @@ assign m_axi_arvalid = axi_arvalid_i;
 assign m_axis_tstrb	 = '1;
 assign m_axis_tlast	 = 1'b0;
 
-assign RIDLE_REG = start_state;
+assign IDLE_REG = start_state;
 
 
 // assign probe[2 * 32 +: 32] = pv_1; // reg7

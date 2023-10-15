@@ -13,41 +13,47 @@ module qt3_tpu_v1
 		parameter  B_BURST_LENGTH            = 4             
 	)
 	( 	
-		// Trigger.
-		input	wire						trigger			,
 
 		output	wire [PMEM_N-1:0]	        pmem_addr       ,   
 		input	wire [63:0]			        pmem_do         ,
 
-		/***********************************/
-		/* AXI4-Lite Slave I/F for configuration */
-		/***********************************/
-		input	wire  						s_axi_aclk		,
-		input 	wire  						s_axi_aresetn	,
 
-		input 	wire	[7:0]				s_axi_awaddr	,
-		input 	wire 	[2:0]				s_axi_awprot	,
-		input 	wire  						s_axi_awvalid	,
-		output	wire  						s_axi_awready	,
 
-		input 	wire 	[31:0] 				s_axi_wdata		,
-		input 	wire 	[3:0]				s_axi_wstrb		,
-		input 	wire  						s_axi_wvalid	,
-		output 	wire  						s_axi_wready	,
+			
+		`define x(name_iterface, name_item) \
+			(* X_INTERFACE_INFO = `"xilinx.com:interface:aximm:1.0 name_iterface name_item `" *)
+	
+	
+		(* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 s_axi_aclk CLK" *)
+		(* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axi, ASSOCIATED_RESET s_axi_aresetn, FREQ_HZ 100000000" *)
+		input   wire                   s_axi_aclk,
+		
+		(* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0  s_axi_aresetn  RST" *)
+		(* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
+		input   wire                   s_axi_aresetn,
 
-		output 	wire 	[1:0]				s_axi_bresp		,
-		output 	wire  						s_axi_bvalid	,
-		input 	wire  						s_axi_bready	,
+		`x(s_axi, AWADDR)  	input 	wire	[7:0]				s_axi_awaddr	,
+		`x(s_axi, AWPROT)   input 	wire 	[2:0]				s_axi_awprot	,
+		`x(s_axi, AWVALID) 	input 	wire  						s_axi_awvalid	,
+		`x(s_axi, AWREADY) 	output	wire  						s_axi_awready	,
+		`x(s_axi, WDATA) 	input 	wire 	[31:0] 				s_axi_wdata		,
+		`x(s_axi, WSTRB) 	input 	wire 	[3:0]				s_axi_wstrb		,
+		`x(s_axi, WVALID) 	input 	wire  						s_axi_wvalid	,
+		`x(s_axi, WREADY) 	output 	wire  						s_axi_wready	,
+		`x(s_axi, BRESP) 	output 	wire 	[1:0]				s_axi_bresp		,
+		`x(s_axi, BVALID) 	output 	wire  						s_axi_bvalid	,
+		`x(s_axi, BREADY) 	input 	wire  						s_axi_bready	,
+		`x(s_axi, ARADDR) 	input 	wire 	[7:0] 				s_axi_araddr	,
+		`x(s_axi, ARPROT) 	input 	wire 	[2:0] 				s_axi_arprot	,
+		`x(s_axi, ARVALID) 	input 	wire  						s_axi_arvalid	,
+		`x(s_axi, ARREADY) 	output 	wire  						s_axi_arready	,
+		`x(s_axi, RDATA) 	output 	wire 	[31:0] 				s_axi_rdata		,
+		`x(s_axi, RRESP) 	output 	wire 	[1:0]				s_axi_rresp		,
+		`x(s_axi, RVALID) 	output 	wire  						s_axi_rvalid	,
+		`x(s_axi, RREADY) 	input 	wire  						s_axi_rready	,
 
-		input 	wire 	[7:0] 				s_axi_araddr	,
-		input 	wire 	[2:0] 				s_axi_arprot	,
-		input 	wire  						s_axi_arvalid	,
-		output 	wire  						s_axi_arready	,
 
-		output 	wire 	[31:0] 				s_axi_rdata		,
-		output 	wire 	[1:0]				s_axi_rresp		,
-		output 	wire  						s_axi_rvalid	,
-		input 	wire  						s_axi_rready	,
+
 
 		// Reset and Clock (m_axi, s_axis, m_axis).
 		input	wire						aclk			,
@@ -105,43 +111,10 @@ module qt3_tpu_v1
 		input	wire						m_axi_rvalid	,
 		output	wire						m_axi_rready	
 
-		// /*************************/
-		// /* AXIS Master Interfase */
-		// /*************************/
-		// output	wire						m_axis_tvalid	,
-		// output	wire	[DATA_WIDTH-1:0]	m_axis_tdata	,
-		// output	wire	[DATA_WIDTH/8-1:0]	m_axis_tstrb	,
-		// output	wire						m_axis_tlast	,
-		// input	wire						m_axis_tready	,
-
-		// /************************/
-		// /* AXIS Slave Interfase */
-		// /************************/
-		// output	wire						s_axis_tready	,
-		// input	wire	[DATA_WIDTH-1:0]	s_axis_tdata	,
-		// input	wire	[DATA_WIDTH/8-1:0]	s_axis_tstrb	,
-		// input	wire						s_axis_tlast	,
-		// input	wire						s_axis_tvalid
+		
 	);
 	
 
-
-    // Port ( 
-   
-        
-    //         // arlock   : out STD_LOGIC_VECTOR(1 downto 0);
-    //         // awlock   : out STD_LOGIC_VECTOR(1 downto 0);
-
-    //         // bid      : in STD_LOGIC_VECTOR(5 downto 0);
-	// 		// wid      : out STD_LOGIC_VECTOR(5 downto 0);
-    //         // rid      : in STD_LOGIC_VECTOR(5 downto 0);
-    //         // arid     : out STD_LOGIC_VECTOR(5 downto 0);
-    //         // awid     : out STD_LOGIC_VECTOR(5 downto 0);
-            
-  
-       
-            
-    //      );
 
 
 
@@ -179,6 +152,7 @@ wire            RIDLE_REG   ;
 wire			WSTART_REG	;
 wire	[31:0]	WADDR_REG	;
 wire	[31:0]	WNBURST_REG	;
+wire	     	WIDLE_REG	;
 
 
 
@@ -230,10 +204,10 @@ axi_slv axi_slv_i
 		// Registers.
 		.DDR_BASEADDR_REG (DDR_BASEADDR_REG),
 		.START_REG        (START_REG       ),
-		.PARTIAL_SUM_REG  (partial_sum     ),
+		.PARTIAL_SUM_REG  (partial_sum     )
 
-		.stimulus (stimulus),
-		.probe (probe)
+		// .stimulus (stimulus),
+		// .probe (probe)
 	);
 
 
@@ -264,17 +238,18 @@ ctrl #(
 		.WSTART_REG		(WSTART_REG		),
 		.WADDR_REG		(WADDR_REG		),
 		.WNBURST_REG	(WNBURST_REG	),
+		.WIDLE_REG      (WIDLE_REG      ),
 
-		.start          (start          ),
+		.start          (start          )
 
-		.probe (probe)
+		// .probe (probe)
 	);
 
 
 
 mac 
 	#(
-		.B(DATA_WIDTH)
+		.DATA_WIDTH(DATA_WIDTH)
 	)
 	mac_i
 	(
@@ -285,12 +260,16 @@ mac
 		.m_axis_tdata	(m_axis_tdata	),
 		.m_axis_tready	(m_axis_tready	),
 
+		.s_axis_tready	(s_axis_tready),
+		.s_axis_tdata 	(s_axis_tdata ),
+		.s_axis_tvalid	(s_axis_tvalid),
+
 		.start          (start          ),
 		.partial_sum    (partial_sum    ),
 
-		.RIDLE_REG      (RIDLE_REG      ),
+		.RIDLE_REG      (RIDLE_REG      )
 
-		.probe (probe)
+		// .probe (probe)
 	);
 
 
@@ -305,9 +284,7 @@ axi_mst
 	)
 	axi_mst_i
 	(
-		// Trigger.
-		.trigger		(trigger		),
-
+	
 		/**************/
 		/* AXI Master */
 		/**************/
@@ -393,8 +370,10 @@ axi_mst
 		.WSTART_REG		(WSTART_REG		),
 		.WADDR_REG		(WADDR_REG		),
 		.WNBURST_REG	(WNBURST_REG	),
+		.WIDLE_REG  	(WIDLE_REG	)
+		
 
-		.probe (probe)
+		// .probe (probe)
 	);
 
 

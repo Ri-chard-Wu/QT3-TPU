@@ -21,6 +21,7 @@ module ctrl
 		output	wire          WSTART_REG	,
 		output	wire [31:0]   WADDR_REG		,
 		output	wire [31:0]   WNBURST_REG	,
+        input	wire          WIDLE_REG  	,
 
         output wire           start,
 
@@ -35,7 +36,9 @@ typedef enum{
     FETCH_ST ,
     DECODE_ST          ,    
     DDR_READ_INIT_ST   ,           
-    DDR_READ_DATA_ST   ,           
+    DDR_READ_DATA_ST   ,      
+    DDR_WRITE_INIT_ST   ,           
+    DDR_WRITE_DATA_ST   ,         
     ERR_INSTR_ST       ,       
     END_ST     
 } state_t;
@@ -64,12 +67,14 @@ wire	[PMEM_N-1:0]	 	pc_i;
 
 
 reg  init_state         ;
-reg  pc_rst_state      ;
+reg  pc_rst_state       ;
 reg  fetch_state        ;
 reg  decode_state       ;
 reg  ddr_read_init_state;
 reg  ddr_read_data_state;
-reg  end_state          ;
+reg  ddr_write_init_state;
+reg  ddr_write_data_state;
+reg  end_state            ;
 
 reg  inst_en		    ;
 reg  pc_en			    ;
@@ -123,6 +128,8 @@ always @(posedge clk) begin
             DECODE_ST:
 				if ( opcode == 8'b00000001 ) // read
 					state <= DDR_READ_INIT_ST;
+				else if ( opcode == 8'b00000010 ) // end
+					state <= DDR_WRITE_INIT_ST;                        
 				else if ( opcode == 8'b00111111 ) // end
 					state <= END_ST;                    
                 else
@@ -133,6 +140,13 @@ always @(posedge clk) begin
 
             DDR_READ_DATA_ST:
                 if (RIDLE_REG)
+                    state <= FETCH_ST;
+        
+            DDR_WRITE_INIT_ST:
+                state <= DDR_WRITE_DATA_ST;
+
+            DDR_WRITE_DATA_ST:
+                if (WIDLE_REG)
                     state <= FETCH_ST;
                 
 			ERR_INSTR_ST:
@@ -178,12 +192,14 @@ assign pc_i	= pc_r + 1;
 
 always_comb begin
 	
-    init_state          = 1'b0;
-    pc_rst_state        = 1'b0;
-    decode_state	    = 1'b0;
-    ddr_read_init_state	= 1'b0;
-    ddr_read_data_state	= 1'b0;
-    end_state           = 1'b0;
+    init_state           = 1'b0;
+    pc_rst_state         = 1'b0;
+    decode_state	     = 1'b0;
+    ddr_read_init_state	 = 1'b0;
+    ddr_read_data_state	 = 1'b0;
+    ddr_write_init_state = 1'b0;
+    ddr_write_data_state = 1'b0;    
+    end_state            = 1'b0;
 
     inst_en		        = 1'b0;
     pc_en			    = 1'b0;
@@ -197,19 +213,25 @@ always_comb begin
             pc_rst_state = 1'b1;
 
         FETCH_ST: begin
-			inst_en		    = 1'b1;
-			pc_en			= 1'b1;
+			inst_en		            = 1'b1;
+			pc_en		            = 1'b1;
 		end
 
         DECODE_ST:
-            decode_state = 1'b1;
+            decode_state            = 1'b1;
 
         DDR_READ_INIT_ST:
-            ddr_read_init_state	= 1'b1;
+            ddr_read_init_state	    = 1'b1;
 
         DDR_READ_DATA_ST:
-            ddr_read_data_state	= 1'b1;
+            ddr_read_data_state	    = 1'b1;
 
+        DDR_WRITE_INIT_ST:
+            ddr_write_init_state	= 1'b1;
+
+        DDR_WRITE_DATA_ST:
+            ddr_write_data_state	= 1'b1;
+            
         END_ST:
             end_state	= 1'b1;
 
@@ -223,14 +245,18 @@ assign RSTART_REG  = ddr_read_init_state;
 assign RADDR_REG   = start_addr;		
 assign RNBURST_REG = {{16{1'b0}}, nburst};
 
+assign WSTART_REG  = ddr_write_init_state;	 
+assign WADDR_REG   = start_addr;		
+assign WNBURST_REG = {{16{1'b0}}, nburst};
+
 assign start = pc_rst_state;
 
 // Multiply address by 8 to convert from 8-bytes-addressing to byte-addressing.
 assign	pmem_addr = {pc_r[PMEM_N-4:0], 3'b000};
 
 
-assign probe[0 * 32 +: 32] = cnt_read_time;
-assign probe[2 * 32 +: 32] = inst_r;        // reg7
+assign probe[0 * 32 +: 32] = cnt_read_time;                       // reg5
+assign probe[2 * 32 +: 32] = inst_r;                              // reg7
 assign probe[4 * 32 +: 32] = {pc_r[PMEM_N-4:0], 3'b000};          // reg9
 
 endmodule

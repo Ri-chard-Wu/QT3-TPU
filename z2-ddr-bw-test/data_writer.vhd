@@ -7,7 +7,7 @@ entity data_writer is
     Generic
     (
         -- Data width.
-        B   : Integer := 64
+        DATA_WIDTH   : Integer := 64
     );
     Port
     (
@@ -16,12 +16,12 @@ entity data_writer is
         
         -- AXI Stream I/F.
         s_axis_tready	: out std_logic;
-		s_axis_tdata	: in std_logic_vector(B-1 downto 0);				
+		s_axis_tdata	: in std_logic_vector(DATA_WIDTH-1 downto 0);				
 		s_axis_tvalid	: in std_logic;
 		
 		-- Memory I/F.
 		mem_we          : out std_logic;
-		mem_di          : out std_logic_vector (B-1 downto 0)
+		mem_di          : out std_logic_vector (DATA_WIDTH-1 downto 0)
     );
 end data_writer;
 
@@ -38,9 +38,9 @@ signal rw_tdata_state           : std_logic;
 -- Axis registers.
 signal tready_i     	: std_logic;
 signal tready_r     	: std_logic;
-signal tdata_r	    	: std_logic_vector(B-1 downto 0);
-signal tdata_rr	    	: std_logic_vector(B-1 downto 0);				
-signal tdata_rrr    	: std_logic_vector(B-1 downto 0);
+signal tdata_r	    	: std_logic_vector(DATA_WIDTH-1 downto 0);
+signal tdata_rr	    	: std_logic_vector(DATA_WIDTH-1 downto 0);				
+signal tdata_rrr    	: std_logic_vector(DATA_WIDTH-1 downto 0);
 signal tvalid_r     	: std_logic;
 signal tvalid_rr    	: std_logic;
 signal tvalid_rrr   	: std_logic;

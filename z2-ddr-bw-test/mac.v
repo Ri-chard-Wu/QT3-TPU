@@ -1,14 +1,18 @@
 module mac
     #(
-        parameter B	= 64
+        parameter DATA_WIDTH	= 64
     )
     (
         input wire         clk		     ,    
         input wire         rstn           ,     
 
-        input wire            m_axis_tvalid  ,     
-        input wire [B - 1:0]  m_axis_tdata	 ,    
-        input wire            m_axis_tready  , 
+        input  wire                   m_axis_tvalid  ,     
+        input  wire [DATA_WIDTH-1:0]  m_axis_tdata	 ,    
+        input  wire                   m_axis_tready  , 
+
+		output wire					  s_axis_tready	,
+		input  wire	[DATA_WIDTH-1:0]  s_axis_tdata	,
+		input  wire		 	          s_axis_tvalid	,
 
         input wire         start , 
         output wire [31:0] partial_sum,
@@ -20,8 +24,10 @@ module mac
     );
 
 
-wire [B-1 : 0] 	mem_di;
-wire            mem_we;
+wire [DATA_WIDTH-1 : 0] 	mem_di;
+wire                        mem_we;
+
+reg mem_we_r;
 
 wire signed	[7:0]	byte_arr_signed	[0:7];
 wire signed	[7:0]	partial_sum_1	[0:3];
@@ -35,7 +41,7 @@ reg [31:0] pv_1;
 
 data_writer
     #(
-        .B(B)
+        .DATA_WIDTH(DATA_WIDTH)
     )
     data_writer_i
 	( 
@@ -60,6 +66,7 @@ begin
     if ( rstn == 1'b0 ) begin
         partial_sum_r  <= 0;
         pv_1 <= 0;
+        mem_we_r <= 0;
     end 
     else begin    
         
@@ -69,9 +76,14 @@ begin
         else if (mem_we) begin   
             pv_1 <= pv_1 + 1;
             partial_sum_r <= partial_sum_r + partial_sum_3;
-        end   
+        end 
+
+        mem_we_r <= mem_we;  
     end
 end    
+
+assign s_axis_tvalid = mem_we_r;
+assign s_axis_tdata = partial_sum_r;
 
 
 generate
