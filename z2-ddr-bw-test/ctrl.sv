@@ -16,7 +16,9 @@ module ctrl
 		output	wire [31:0]   WADDR_REG		,
 		output	wire [31:0]   WNBURST_REG	,
 
-        output wire           start
+        output wire           start,
+
+        output wire [5 * 32 - 1:0] probe
 	);
 
 
@@ -45,6 +47,8 @@ assign len	        	= inst[23:20];      // number of successive 64-bits data to 
 
 reg [31:0] cnt_read_time;
 reg [31:0] rx_cnt_r;
+
+reg [31:0] pv_1;
 
 wire inst_fifo_empty;
 
@@ -77,10 +81,11 @@ always @(posedge clk) begin
 	if (rstn == 1'b0) begin
     
 		state		      <= INIT1_ST;
-        inst              <= 64'h0100000000800000; // 0x01 + 0x00000000 + 0x8 + dont-care's.
+        inst              <= 64'h0100000000500000; // 0x01 + 0x00000000 + 0x8 + dont-care's.
 		cnt_read_time     <= 0;
         rx_cnt_r          <= 0;
-
+        
+        pv_1 <= 0;
 	end
 	else begin
 		
@@ -137,8 +142,15 @@ always @(posedge clk) begin
 		end        
 		else if (ddr_read_init_state == 1'b1) begin   
             rx_cnt_r <= rx_cnt_r + 1;
-		end        
-
+            pv_1 <= pv_1 + 1;
+		end     
+		else if (ddr_read_data_state == 1'b1) begin   
+            pv_1 <= pv_1 + 2;
+		end                
+		else if (end_state == 1'b1) begin   
+            pv_1 <= pv_1 + 4;
+		end      
+        
 	end	
 end
 
@@ -190,5 +202,8 @@ assign RADDR_REG   = start_addr;
 assign RLENGTH_REG = {{28{1'b0}}, len};
 
 assign start = start_state;
+
+
+assign probe[0 * 32 +: 32] = pv_1;
 
 endmodule

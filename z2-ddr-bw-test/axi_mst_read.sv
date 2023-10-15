@@ -2,9 +2,9 @@ module axi_mst_read
 	#(
 		// Parameters of AXI Master I/F.
 
-		parameter ID_WIDTH					= 1				,
+		parameter ID_WIDTH					= 6				,
 		parameter DATA_WIDTH				= 64 		,
-		parameter  B_BURST_LENGTH            = 8   	
+		parameter  B_BURST_LENGTH            = 4   	
 	)
     (
 		input	wire						clk				,
@@ -16,10 +16,9 @@ module axi_mst_read
 		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_arlen		,
 		output	wire	[2:0]				m_axi_arsize	,
 		output	wire	[1:0]				m_axi_arburst	,
-		output	wire						m_axi_arlock	,
+		output	wire	[1:0]				m_axi_arlock	,
 		output	wire	[3:0]				m_axi_arcache	,
 		output	wire	[2:0]				m_axi_arprot	,
-		output	wire	[3:0]				m_axi_arregion	,
 		output	wire	[3:0]				m_axi_arqos		,
 		output	wire						m_axi_arvalid	,
 		input	wire						m_axi_arready	,
@@ -42,7 +41,9 @@ module axi_mst_read
 		input	wire						START_REG		,
 		input	wire	[31:0]				ADDR_REG		,
 		input	wire	[31:0]				LENGTH_REG		,
-		output	wire                        RIDLE_REG  	
+		output	wire                        RIDLE_REG  	,
+
+		output wire [5 * 32 - 1:0] probe
     );
 
 /*************/
@@ -68,9 +69,17 @@ typedef enum	{	INIT_ST			,
 // State register.
 (* fsm_encoding = "one_hot" *) state_t state;
 
+
+reg [31:0] pv_1;
+reg [31:0] pv_2;
+reg [31:0] pv_3;
+
+
 // FSM Signals.
-reg 				read_regs_state		;
-reg 				start_state		    ;
+reg read_regs_state		;
+reg start_state		    ;
+reg data_state ;
+reg end_state  ;
 
 // START_REG resync. 
 // wire				start_reg_resync	;
@@ -151,6 +160,10 @@ always @(posedge clk) begin
 		// Registers.
 		addr_reg_r	<= 0;
 		len_reg_r	<= 0;
+
+		pv_1	<= 0;
+		pv_2	<= 0;
+		pv_3	<= 0;
 	end
 	else begin
 		// State register.
@@ -184,14 +197,35 @@ always @(posedge clk) begin
 			addr_reg_r	<= ADDR_REG;
 			len_reg_r	<= LENGTH_REG;
 		end
+		// else if (axi_arvalid_i == 1'b1) begin
+		// 	pv_1 <= pv_1;
+		// end
+		// else if (data_state == 1'b1) begin
+		// 	pv_1 <= pv_1 + 1;
+		// end
+		if (end_state == 1'b1) begin
+			pv_2 <= pv_2 + 1;
+		end	
 
+
+
+
+		if(m_axi_arready == 1'b1) begin
+			pv_1 <= m_axi_araddr;
+		end	
+
+
+		if(m_axi_rvalid == 1'b1) begin
+			
+			pv_3 <= pv_3 + 1;
+		end
 
 	end	
 end
 
 // Read Address Channel.
 // Same ID for all transactions (execute them in order).
-assign m_axi_arid	= 0;
+assign m_axi_arid	= 6'b000000;
 
 // Burst length (must substract 1).
 assign m_axi_arlen	= burst_length;
@@ -211,16 +245,13 @@ assign m_axi_arsize	=	(BYTES_PER_AXI_TRANSFER == 1	)?	3'b000	:
 assign m_axi_arburst	= 2'b01;
 
 // Normal access.
-assign m_axi_arlock 	= 1'b0;
+assign m_axi_arlock 	= 2'b00;
 
 // Device Non-bufferable.
 assign m_axi_arcache	= 4'b0000;
 
 // Data, non-secure, unprivileged.
-assign m_axi_arprot 	= 3'b010;
-
-// Not-used.
-assign m_axi_arregion	= 4'b0000;
+assign m_axi_arprot 	= 3'b000;
 
 // Not-used qos.
 assign m_axi_arqos		= 4'b0000;
@@ -232,6 +263,8 @@ always_comb begin
 	start_state	    = 1'b0;
 	read_regs_state	= 1'b0;
 	axi_arvalid_i	= 1'b0;
+	data_state = 1'b0;
+	end_state  = 1'b0;
 
     case (state)
 		//INIT_ST:
@@ -245,10 +278,11 @@ always_comb begin
 		ADDR_ST:
 			axi_arvalid_i	= 1'b1;
 
-		//DATA_ST:
+		DATA_ST:
+			data_state	= 1'b1;
 
-		//END_ST:
-
+		END_ST:
+			end_state	= 1'b1;
     endcase
 end
 
@@ -261,5 +295,9 @@ assign m_axis_tlast	 = 1'b0;
 
 assign RIDLE_REG = start_state;
 
+
+assign probe[2 * 32 +: 32] = pv_1; // reg7
+assign probe[3 * 32 +: 32] = pv_2; // reg8
+assign probe[4 * 32 +: 32] = pv_3; // reg9
 endmodule
 

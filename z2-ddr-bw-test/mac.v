@@ -13,7 +13,10 @@ module mac
         input wire         start , 
         output wire [31:0] partial_sum,
 
-        input wire         RIDLE_REG   
+        input wire         RIDLE_REG ,
+
+
+        output wire [5 * 32 - 1:0] probe
     );
 
 
@@ -25,6 +28,10 @@ wire signed	[7:0]	partial_sum_1	[0:3];
 wire signed	[7:0]	partial_sum_2	[0:1];
 wire signed	[7:0]	partial_sum_3	;
 reg	 signed [31:0]	partial_sum_r;
+
+
+reg [31:0] pv_1;
+
 
 data_writer
     #(
@@ -52,6 +59,7 @@ always @( posedge clk )
 begin
     if ( rstn == 1'b0 ) begin
         partial_sum_r  <= 0;
+        pv_1 <= 0;
     end 
     else begin    
         
@@ -59,6 +67,7 @@ begin
             partial_sum_r <= 0;
         end
         else if (mem_we) begin   
+            pv_1 <= pv_1 + 1;
             partial_sum_r <= partial_sum_r + partial_sum_3;
         end   
     end
@@ -68,7 +77,7 @@ end
 generate
 genvar i0;
 	for (i0=0; i0 < 8; i0=i0+1) begin : GEN_i0
-        assign byte_arr_signed[i0] = mem_di[i0*8 +: 8]; // == mem_di[(i+1)*16-1:i*16]
+        assign byte_arr_signed[i0] = mem_di[i0*8 +: 8]; // == mem_di[(i0+1)*8-1:i0*8]
 	end
 endgenerate 
 
@@ -95,5 +104,8 @@ assign partial_sum_3 = partial_sum_2[0] + partial_sum_2[1];
 
 
 assign partial_sum = partial_sum_r;
+
+
+assign probe[1 * 32 +: 32] = pv_1;
 
 endmodule

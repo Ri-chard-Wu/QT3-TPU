@@ -4,10 +4,12 @@ module qt3_tpu_v1
 	#(
 		// Parameters of AXI Master I/F.
 		// parameter TARGET_SLAVE_BASE_ADDR	= 32'h20000000	,
-		parameter ID_WIDTH					= 1				,
+		parameter ID_WIDTH					= 6				,
 		parameter DATA_WIDTH				= 64			,
 		parameter BURST_LENGTH				= 7				,
-		parameter  B_BURST_LENGTH            = 8             
+
+		// z2 only support 4, but in simulation we must use 8.
+		parameter  B_BURST_LENGTH            = 4             
 	)
 	( 	
 		// Trigger.
@@ -57,15 +59,15 @@ module qt3_tpu_v1
 		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_awlen		,
 		output	wire	[2:0]				m_axi_awsize	,
 		output	wire	[1:0]				m_axi_awburst	,
-		output	wire						m_axi_awlock	,
+		output	wire	[1:0]				m_axi_awlock	,
 		output	wire	[3:0]				m_axi_awcache	,
 		output	wire	[2:0]				m_axi_awprot	,
-		output	wire	[3:0]				m_axi_awregion	,
 		output	wire	[3:0]				m_axi_awqos		,
 		output	wire						m_axi_awvalid	,
 		input	wire						m_axi_awready	,
 
 		// Write Data Channel.
+		output	wire	[ID_WIDTH-1:0]		m_axi_wid		,
 		output	wire	[DATA_WIDTH-1:0]	m_axi_wdata		,
 		output	wire	[DATA_WIDTH/8-1:0]	m_axi_wstrb		,
 		output	wire						m_axi_wlast		,
@@ -84,10 +86,9 @@ module qt3_tpu_v1
 		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_arlen		,
 		output	wire	[2:0]				m_axi_arsize	,
 		output	wire	[1:0]				m_axi_arburst	,
-		output	wire						m_axi_arlock	,
+		output	wire	[1:0]				m_axi_arlock	,
 		output	wire	[3:0]				m_axi_arcache	,
 		output	wire	[2:0]				m_axi_arprot	,
-		output	wire	[3:0]				m_axi_arregion	,
 		output	wire	[3:0]				m_axi_arqos		,
 		output	wire						m_axi_arvalid	,
 		input	wire						m_axi_arready	,
@@ -119,6 +120,26 @@ module qt3_tpu_v1
 		// input	wire						s_axis_tvalid
 	);
 	
+
+
+    // Port ( 
+   
+        
+    //         // arlock   : out STD_LOGIC_VECTOR(1 downto 0);
+    //         // awlock   : out STD_LOGIC_VECTOR(1 downto 0);
+
+    //         // bid      : in STD_LOGIC_VECTOR(5 downto 0);
+	// 		// wid      : out STD_LOGIC_VECTOR(5 downto 0);
+    //         // rid      : in STD_LOGIC_VECTOR(5 downto 0);
+    //         // arid     : out STD_LOGIC_VECTOR(5 downto 0);
+    //         // awid     : out STD_LOGIC_VECTOR(5 downto 0);
+            
+  
+       
+            
+    //      );
+
+
 
 /*************************/
 /* AXIS Master Interfase */
@@ -159,6 +180,8 @@ wire	[31:0]	WNBURST_REG	;
 
 wire        start;
 wire [31:0] partial_sum;
+
+wire [5 * 32 - 1:0] probe;
 
 /**********************/
 /* Begin Architecture */
@@ -201,7 +224,8 @@ axi_slv axi_slv_i
 		// Registers.
 		.DDR_BASEADDR_REG (DDR_BASEADDR_REG),
 		.START_REG        (START_REG       ),
-		.PARTIAL_SUM_REG  (partial_sum     )
+		.PARTIAL_SUM_REG  (partial_sum     ),
+		.probe (probe)
 	);
 
 
@@ -223,7 +247,9 @@ ctrl ctrl_i
 		.WADDR_REG		(WADDR_REG		),
 		.WNBURST_REG	(WNBURST_REG	),
 
-		.start          (start          )
+		.start          (start          ),
+
+		.probe (probe)
 	);
 
 
@@ -244,7 +270,9 @@ mac
 		.start          (start          ),
 		.partial_sum    (partial_sum    ),
 
-		.RIDLE_REG      (RIDLE_REG      )
+		.RIDLE_REG      (RIDLE_REG      ),
+
+		.probe (probe)
 	);
 
 
@@ -279,12 +307,12 @@ axi_mst
 		.m_axi_awlock	(m_axi_awlock	),
 		.m_axi_awcache	(m_axi_awcache	),
 		.m_axi_awprot	(m_axi_awprot	),
-		.m_axi_awregion	(m_axi_awregion	),
 		.m_axi_awqos	(m_axi_awqos	),
 		.m_axi_awvalid	(m_axi_awvalid	),
 		.m_axi_awready	(m_axi_awready	),
 
 		// Write Data Channel.
+		.m_axi_wid      (m_axi_wid      ),
 		.m_axi_wdata	(m_axi_wdata	),
 		.m_axi_wstrb	(m_axi_wstrb	),
 		.m_axi_wlast	(m_axi_wlast	),
@@ -306,7 +334,6 @@ axi_mst
 		.m_axi_arlock	(m_axi_arlock	),
 		.m_axi_arcache	(m_axi_arcache	),
 		.m_axi_arprot	(m_axi_arprot	),
-		.m_axi_arregion	(m_axi_arregion	),
 		.m_axi_arqos	(m_axi_arqos	),
 		.m_axi_arvalid	(m_axi_arvalid	),
 		.m_axi_arready	(m_axi_arready	),
@@ -347,7 +374,9 @@ axi_mst
 
 		.WSTART_REG		(WSTART_REG		),
 		.WADDR_REG		(WADDR_REG		),
-		.WNBURST_REG	(WNBURST_REG	)
+		.WNBURST_REG	(WNBURST_REG	),
+
+		.probe (probe)
 	);
 
 

@@ -5,10 +5,10 @@
 module axi_mst_write
     #(
 
-		parameter ID_WIDTH					= 1				,
+		parameter ID_WIDTH					= 6				,
 		parameter DATA_WIDTH				= 64			,
 		parameter BURST_LENGTH				= 7,
-		parameter  B_BURST_LENGTH            = 8   
+		parameter  B_BURST_LENGTH            = 4   
     )
     (
         input	wire						clk   			,
@@ -23,14 +23,14 @@ module axi_mst_write
 		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_awlen		,
 		output	wire	[2:0]				m_axi_awsize	,
 		output	wire	[1:0]				m_axi_awburst	,
-		output	wire						m_axi_awlock	,
+		output	wire	[1:0]				m_axi_awlock	,
 		output	wire	[3:0]				m_axi_awcache	,
 		output	wire	[2:0]				m_axi_awprot	,
-		output	wire	[3:0]				m_axi_awregion	,
 		output	wire	[3:0]				m_axi_awqos		,
 		output	wire						m_axi_awvalid	,
 		input	wire						m_axi_awready	,
 
+		output	wire	[ID_WIDTH-1:0]		m_axi_wid		,
 		output	wire	[DATA_WIDTH-1:0]	m_axi_wdata		,
 		output	wire	[DATA_WIDTH/8-1:0]	m_axi_wstrb		,
 		output	wire						m_axi_wlast		,
@@ -173,7 +173,8 @@ assign s_axis_tready 	= ~fifo_full;
 
 // Write Address Channel.
 // Same ID for all transactions (execute them in order).
-assign m_axi_awid	= 0;
+assign m_axi_awid	= 6'b000000;
+assign m_axi_wid = 6'b000000;
 
 // Burst size (transactions).
 assign m_axi_awlen	= BURST_LENGTH;
@@ -193,7 +194,7 @@ assign m_axi_awsize	=	(BYTES_PER_AXI_TRANSFER == 1	)?	3'b000	:
 assign m_axi_awburst 	= 2'b01;
 
 // Normal access.
-assign m_axi_awlock	 	= 1'b0;
+assign m_axi_awlock	 	= 2'b00;
 
 // Device Non-bufferable.
 assign m_axi_awcache	= 4'b0000;
@@ -201,8 +202,6 @@ assign m_axi_awcache	= 4'b0000;
 // Data, non-secure, unprivileged.
 assign m_axi_awprot		= 3'b010;
 
-// Not-used.
-assign m_axi_awregion	= 4'b0000;
 
 // Not-used qos.
 assign m_axi_awqos		= 4'b0000;

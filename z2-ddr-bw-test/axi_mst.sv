@@ -3,10 +3,10 @@
 module axi_mst
 	#(
 		// Parameters of AXI Master I/F.
-		parameter ID_WIDTH					= 1				,
+		parameter ID_WIDTH					= 6				,
 		parameter DATA_WIDTH				= 64			,
 		parameter BURST_LENGTH				= 7,
-		parameter  B_BURST_LENGTH            = 8   
+		parameter  B_BURST_LENGTH            = 4   
 	)
 	(
 		// Trigger.
@@ -26,15 +26,15 @@ module axi_mst
 		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_awlen		,
 		output	wire	[2:0]				m_axi_awsize	,
 		output	wire	[1:0]				m_axi_awburst	,
-		output	wire						m_axi_awlock	,
+		output	wire	[1:0]				m_axi_awlock	,
 		output	wire	[3:0]				m_axi_awcache	,
 		output	wire	[2:0]				m_axi_awprot	,
-		output	wire	[3:0]				m_axi_awregion	,
 		output	wire	[3:0]				m_axi_awqos		,
 		output	wire						m_axi_awvalid	,
 		input	wire						m_axi_awready	,
 
 		// Write Data Channel.
+		output	wire	[ID_WIDTH-1:0]		m_axi_wid		,
 		output	wire	[DATA_WIDTH-1:0]	m_axi_wdata		,
 		output	wire	[DATA_WIDTH/8-1:0]	m_axi_wstrb		,
 		output	wire						m_axi_wlast		,
@@ -53,10 +53,9 @@ module axi_mst
 		output	wire	[B_BURST_LENGTH - 1:0]				m_axi_arlen		,
 		output	wire	[2:0]				m_axi_arsize	,
 		output	wire	[1:0]				m_axi_arburst	,
-		output	wire						m_axi_arlock	,
+		output	wire	[1:0]				m_axi_arlock	,
 		output	wire	[3:0]				m_axi_arcache	,
 		output	wire	[2:0]				m_axi_arprot	,
-		output	wire	[3:0]				m_axi_arregion	,
 		output	wire	[3:0]				m_axi_arqos		,
 		output	wire						m_axi_arvalid	,
 		input	wire						m_axi_arready	,
@@ -96,7 +95,9 @@ module axi_mst
 
 		input	wire						WSTART_REG		,
 		input	wire	[31:0]				WADDR_REG		,
-		input	wire	[31:0]				WNBURST_REG
+		input	wire	[31:0]				WNBURST_REG,
+
+		output wire [5 * 32 - 1:0] probe
 	);
 
 /*************/
@@ -114,7 +115,8 @@ axi_mst_read
 		// Parameters of AXI Master I/F.
 		
 		.ID_WIDTH				(ID_WIDTH				),
-		.DATA_WIDTH				(DATA_WIDTH				)
+		.DATA_WIDTH				(DATA_WIDTH				),
+		.B_BURST_LENGTH         (B_BURST_LENGTH)
     )
 	axi_mst_read_i
     (
@@ -130,7 +132,6 @@ axi_mst_read
 		.m_axi_arlock	(m_axi_arlock	),
 		.m_axi_arcache	(m_axi_arcache	),
 		.m_axi_arprot	(m_axi_arprot	),
-		.m_axi_arregion	(m_axi_arregion	),
 		.m_axi_arqos	(m_axi_arqos	),
 		.m_axi_arvalid	(m_axi_arvalid	),
 		.m_axi_arready	(m_axi_arready	),
@@ -153,7 +154,9 @@ axi_mst_read
 		.START_REG		(RSTART_REG		),
 		.ADDR_REG		(RADDR_REG		),
 		.LENGTH_REG		(RLENGTH_REG	),
-		.RIDLE_REG      (RIDLE_REG      )
+		.RIDLE_REG      (RIDLE_REG      ),
+
+		.probe (probe)
     );
 
 
@@ -167,7 +170,8 @@ axi_mst_write
     #(
 		.ID_WIDTH				(ID_WIDTH				),
 		.DATA_WIDTH				(DATA_WIDTH				),
-		.BURST_LENGTH			(BURST_LENGTH				)
+		.BURST_LENGTH			(BURST_LENGTH				),
+		.B_BURST_LENGTH         (B_BURST_LENGTH)
     )
 	axi_mst_write_i
     (
@@ -186,11 +190,11 @@ axi_mst_write
 		.m_axi_awlock	(m_axi_awlock	),
 		.m_axi_awcache	(m_axi_awcache	),
 		.m_axi_awprot	(m_axi_awprot	),
-		.m_axi_awregion	(m_axi_awregion	),
 		.m_axi_awqos	(m_axi_awqos	),
 		.m_axi_awvalid	(m_axi_awvalid	),
 		.m_axi_awready	(m_axi_awready	),
 
+		.m_axi_wid      (m_axi_wid      ),
 		.m_axi_wdata	(m_axi_wdata	),
 		.m_axi_wstrb	(m_axi_wstrb	),
 		.m_axi_wlast	(m_axi_wlast	),

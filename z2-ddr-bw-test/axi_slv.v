@@ -35,7 +35,9 @@ module axi_slv
 		// Registers.
 		output	wire	[31:0]    DDR_BASEADDR_REG,
 		output	wire            START_REG       ,
-    input	  wire  [31:0]    PARTIAL_SUM_REG 
+    input	  wire  [31:0]    PARTIAL_SUM_REG ,
+
+    input wire [5 * 32 - 1:0] probe
 );
 
 // Width of S_AXI data bus
@@ -66,6 +68,13 @@ reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg1;
 reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg2;
 reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg3;
 reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg4;
+reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg5;
+reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg6;
+reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg7;
+reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg8;
+reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg9;
+
+
 
 wire	 slv_reg_rden;
 wire	 slv_reg_wren;
@@ -155,6 +164,12 @@ begin
       slv_reg2 <= 0;
       slv_reg3 <= 0;
       slv_reg4 <= 0;
+      slv_reg5 <= 0;
+      slv_reg6 <= 0;
+      slv_reg7 <= 0;
+      slv_reg8 <= 0;
+      slv_reg9 <= 0;     
+
     end 
   else begin
 
@@ -171,11 +186,6 @@ begin
               if ( s_axi_wstrb[byte_index] == 1 ) begin
                 slv_reg1[(byte_index*8) +: 8] <= s_axi_wdata[(byte_index*8) +: 8];
               end  
-          // 6'h02:
-          //   for ( byte_index = 0; byte_index <= (C_S_AXI_DATA_WIDTH/8)-1; byte_index = byte_index+1 )
-          //     if ( s_axi_wstrb[byte_index] == 1 ) begin
-          //       slv_reg2[(byte_index*8) +: 8] <= s_axi_wdata[(byte_index*8) +: 8];
-          //     end  
           6'h03:
             for ( byte_index = 0; byte_index <= (C_S_AXI_DATA_WIDTH/8)-1; byte_index = byte_index+1 )
               if ( s_axi_wstrb[byte_index] == 1 ) begin
@@ -186,12 +196,14 @@ begin
               if ( s_axi_wstrb[byte_index] == 1 ) begin
                 slv_reg4[(byte_index*8) +: 8] <= s_axi_wdata[(byte_index*8) +: 8];
               end  
+           
           default : begin
                       slv_reg0 <= slv_reg0;
                       slv_reg1 <= slv_reg1;
-                      // slv_reg2 <= slv_reg2;
                       slv_reg3 <= slv_reg3;
                       slv_reg4 <= slv_reg4;
+
+                                    
                     end
         endcase
       end
@@ -199,6 +211,12 @@ begin
 
 
       slv_reg2 <= PARTIAL_SUM_REG;
+
+      slv_reg5 <= probe[0 * 32 +: 32];
+      slv_reg6 <= probe[1 * 32 +: 32];
+      slv_reg7 <= probe[2 * 32 +: 32];
+      slv_reg8 <= probe[3 * 32 +: 32];
+      slv_reg9 <= probe[4 * 32 +: 32];
       
   end
 end    
@@ -281,6 +299,11 @@ begin
         6'h02   : reg_data_out <= slv_reg2;
         6'h03   : reg_data_out <= slv_reg3;
         6'h04   : reg_data_out <= slv_reg4;
+        6'h05   : reg_data_out <= slv_reg5;
+        6'h06   : reg_data_out <= slv_reg6;
+        6'h07   : reg_data_out <= slv_reg7;
+        6'h08   : reg_data_out <= slv_reg8;
+        6'h09   : reg_data_out <= slv_reg9;        
         default : reg_data_out <= 0;
       endcase
 end
@@ -304,5 +327,8 @@ end
 assign START_REG = slv_reg0[0];
 assign DDR_BASEADDR_REG	= slv_reg1[31:0];
       
+
+
+
 
 endmodule
