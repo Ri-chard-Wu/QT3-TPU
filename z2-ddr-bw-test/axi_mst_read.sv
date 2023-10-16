@@ -149,9 +149,6 @@ always @(posedge clk) begin
 		nburst_reg_r	<= 0;
 		cnt_nburst      <= 0;
 
-		pv_1	<= 0;
-		pv_2	<= 0;
-		pv_3	<= 0;
 	end
 	else begin
 		// State register.
@@ -192,12 +189,10 @@ always @(posedge clk) begin
 
 		// Registers.
 		if (read_regs_state == 1'b1) begin
-			pv_1 <= pv_1;
 			addr_reg_r	    <= ADDR_REG;
 			nburst_reg_r	<= NBURST_REG;
 		end
 		else if (incr_addr_state == 1'b1) begin
-			pv_1 <= pv_1 + 1;
 			addr_reg_r	    <= addr_acc;
 			nburst_reg_r	<= nburst_reg_r;
 		end
@@ -207,9 +202,6 @@ always @(posedge clk) begin
 			cnt_nburst <= 0;
 		else if (m_axi_rvalid == 1'b1 && m_axi_rlast == 1'b1 && fifo_full == 1'b0)
 			cnt_nburst <= cnt_nburst + 1;	
-
-		if (end_state == 1'b1)
-			pv_3 <= pv_3 + 1;
 
 	end	
 end
@@ -292,7 +284,7 @@ assign IDLE_REG = start_state;
 
 
 // assign probe[2 * 32 +: 32] = pv_1; // reg7
-assign probe[3 * 32 +: 32] = cnt_nburst; // reg8
+// assign probe[3 * 32 +: 32] = cnt_nburst; // reg8
 // assign probe[4 * 32 +: 32] = pv_3; // reg9
 endmodule
 

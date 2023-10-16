@@ -10,7 +10,6 @@ module ctrl
 		output	wire [PMEM_N-1:0] pmem_addr   ,   
 		input	wire [63:0]		  pmem_do     ,
 
-        input	wire [31:0]   DDR_BASEADDR_REG,
 		input	wire          START_REG       ,
 
 		output	wire          RSTART_REG	,
@@ -52,8 +51,12 @@ wire [7:0]  opcode;     // 8 bit
 wire [31:0] start_addr; // 32 bit
 wire [15:0] nburst;        // 16 bit 
 
+reg [31:0] start_addr_r;    // 32 bit
+reg [15:0] nburst_r;        // 16 bit 
+
+
 assign opcode		    = inst_r[63:56]; 
-assign start_addr		= inst_r[55:24] + DDR_BASEADDR_REG;
+assign start_addr		= inst_r[55:24];
 assign nburst	        = inst_r[23:8];      
 
 
@@ -104,6 +107,10 @@ always @(posedge clk) begin
 		pc_r			<= 0;
 		inst_r			<= 0;
 
+  
+        start_addr_r  <= 0;
+        nburst_r      <= 0;      
+        
         pv_1 <= 0;
 	end
 	else begin
@@ -178,9 +185,12 @@ always @(posedge clk) begin
 
 		if (inst_en == 1'b1) begin
 			inst_r <= pmem_do;
-            pv_1 <= pv_1 + 1;
         end
         
+
+
+        start_addr_r <= start_addr;
+        nburst_r     <= nburst    ;
 	end	
 end
 
@@ -242,12 +252,12 @@ end
 
 
 assign RSTART_REG  = ddr_read_init_state;	 
-assign RADDR_REG   = start_addr;		
-assign RNBURST_REG = {{16{1'b0}}, nburst};
+assign RADDR_REG   = start_addr_r;		
+assign RNBURST_REG = {{16{1'b0}}, nburst_r};
 
 assign WSTART_REG  = ddr_write_init_state;	 
-assign WADDR_REG   = start_addr;		
-assign WNBURST_REG = {{16{1'b0}}, nburst};
+assign WADDR_REG   = start_addr_r;		
+assign WNBURST_REG = {{16{1'b0}}, nburst_r};
 
 assign start = pc_rst_state;
 
@@ -255,8 +265,8 @@ assign start = pc_rst_state;
 assign	pmem_addr = {pc_r[PMEM_N-4:0], 3'b000};
 
 
-assign probe[0 * 32 +: 32] = cnt_read_time;                       // reg5
-assign probe[2 * 32 +: 32] = inst_r;                              // reg7
-assign probe[4 * 32 +: 32] = {pc_r[PMEM_N-4:0], 3'b000};          // reg9
+// assign probe[0 * 32 +: 32] = cnt_read_time;                       // reg5
+// assign probe[2 * 32 +: 32] = inst_r;                              // reg7
+// assign probe[4 * 32 +: 32] = {pc_r[PMEM_N-4:0], 3'b000};          // reg9
 
 endmodule

@@ -7,7 +7,7 @@ module qt3_tpu_v1
 		parameter DATA_WIDTH				= 64			,
 
 		// max can go up to 15? test it.
-		parameter BURST_LENGTH				= 7				, 
+		parameter BURST_LENGTH				= 15				, 
 
 		// z2 only support 4, but in simulation we must use 8.
 		parameter  B_BURST_LENGTH            = 4             
@@ -141,7 +141,6 @@ wire						s_axis_tvalid   ;
 /********************/
 
 // Registers.
-wire 	[31:0]	DDR_BASEADDR_REG;
 wire            START_REG;
 
 wire			RSTART_REG	;
@@ -202,12 +201,8 @@ axi_slv axi_slv_i
 		.s_axi_rready	(s_axi_rready	),
 
 		// Registers.
-		.DDR_BASEADDR_REG (DDR_BASEADDR_REG),
-		.START_REG        (START_REG       ),
-		.PARTIAL_SUM_REG  (partial_sum     )
-
-		// .stimulus (stimulus),
-		// .probe (probe)
+		.START_REG        (START_REG       )
+		
 	);
 
 
@@ -225,8 +220,6 @@ ctrl #(
 
 		.pmem_addr      (pmem_addr        ),
 		.pmem_do        (pmem_do          ),
-
-		.DDR_BASEADDR_REG(DDR_BASEADDR_REG),
 
 		.START_REG      (START_REG),
 
@@ -267,10 +260,12 @@ mac
 		.start          (start          ),
 		.partial_sum    (partial_sum    ),
 
-		.RIDLE_REG      (RIDLE_REG      )
+		.WSTART_REG	(WSTART_REG	),
+		.RSTART_REG(RSTART_REG)
 
 		// .probe (probe)
 	);
+
 
 
 axi_mst

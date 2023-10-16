@@ -167,7 +167,7 @@ axi_mst_write
     #(
 		.ID_WIDTH				(ID_WIDTH				),
 		.DATA_WIDTH				(DATA_WIDTH				),
-		.BURST_LENGTH			(BURST_LENGTH				),
+		.BURST_LENGTH			(0				),
 		.B_BURST_LENGTH         (B_BURST_LENGTH)
     )
 	axi_mst_write_i

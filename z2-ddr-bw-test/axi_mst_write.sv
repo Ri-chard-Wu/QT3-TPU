@@ -1,7 +1,4 @@
 
-
-// 4-bypes per axi transfer, do 16 (BURST_LENGTH) axi transfers per burst, do NBURST_REG number of bursts per trigger.
-
 module axi_mst_write
     #(
 
@@ -13,9 +10,6 @@ module axi_mst_write
     (
         input	wire						clk   			,
         input	wire						rstn 			,
-
-		// Trigger.
-		input	wire						trigger			,
 
 		// AXI Master Interface.
 		output	wire	[ID_WIDTH-1:0]		m_axi_awid		,
@@ -129,7 +123,7 @@ fifo_axi
 		.B(DATA_WIDTH	),
 		
 		// Fifo depth.
-		.N(16			)
+		.N(32			)
     )
 	fifo_in_i
     ( 
@@ -209,7 +203,7 @@ always @(posedge clk) begin
 
 		// Fifo signals.
 		fifo_dout_r		<= 0;
-		fifo_empty_r	<= 0;
+		fifo_empty_r	<= 1;
 
 		// Burst counter.
 		cnt_burst		<= 0;
