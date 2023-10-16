@@ -27,6 +27,7 @@ wire [DATA_WIDTH-1 : 0] 	mem_di;
 wire                        mem_we;
 
 reg mem_we_r;
+reg mem_we_rr;
 reg [DATA_WIDTH-1:0]	partial_sum_r;
 reg [31:0] pv_1;
 
@@ -72,6 +73,7 @@ begin
             partial_sum_r <= partial_sum_r + s_r;
         end 
 
+        // mem_we_rr <= mem_we_r;
         mem_we_r <= mem_we;  
         s_r <= s_i;
     end
@@ -82,6 +84,7 @@ assign s_i = mem_di[0*32+:32] + mem_di[1*32+:32];
 
 
 assign s_axis_tvalid = WSTART_REG;
+// assign s_axis_tvalid = mem_we_rr;
 assign s_axis_tdata = partial_sum_r;
 
 

@@ -49,15 +49,15 @@ reg  [63:0] inst_r;
 
 wire [7:0]  opcode;     // 8 bit
 wire [31:0] start_addr; // 32 bit
-wire [15:0] nburst;        // 16 bit 
+wire [23:0] nburst;        // 24 bit 
 
 reg [31:0] start_addr_r;    // 32 bit
-reg [15:0] nburst_r;        // 16 bit 
+reg [23:0] nburst_r;        // 24 bit 
 
 
 assign opcode		    = inst_r[63:56]; 
 assign start_addr		= inst_r[55:24];
-assign nburst	        = inst_r[23:8];      
+assign nburst	        = inst_r[23:0];      
 
 
 reg [31:0] cnt_read_time;
@@ -253,11 +253,11 @@ end
 
 assign RSTART_REG  = ddr_read_init_state;	 
 assign RADDR_REG   = start_addr_r;		
-assign RNBURST_REG = {{16{1'b0}}, nburst_r};
+assign RNBURST_REG = {{8{1'b0}}, nburst_r};
 
 assign WSTART_REG  = ddr_write_init_state;	 
 assign WADDR_REG   = start_addr_r;		
-assign WNBURST_REG = {{16{1'b0}}, nburst_r};
+assign WNBURST_REG = {{8{1'b0}}, nburst_r};
 
 assign start = pc_rst_state;
 

@@ -332,7 +332,7 @@ assign m_axi_wvalid		= ~fifo_empty_r & data_state;
 
 assign m_axi_bready		= resp_state;
 
-assign IDLE_REG = init_state;
+assign IDLE_REG         = init_state;
 
 endmodule
 
