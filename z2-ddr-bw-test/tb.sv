@@ -351,7 +351,7 @@ initial begin
 	//    data_mem = axi_slv_0_agent.mem_model.backdoor_memory_write(addr, addr - 424673280);
 		axi_slv_0_agent.mem_model.backdoor_memory_write(
 													.addr (addr),
-													.payload (addr - 424673280),
+													.payload (addr - 424673280 + 1024),
 													.strb (8'b11111111)			
 		);
 
