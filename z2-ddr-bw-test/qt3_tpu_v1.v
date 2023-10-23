@@ -206,10 +206,6 @@ axi_slv axi_slv_i
 	);
 
 
-// assign pmem_addr = stimulus[PMEM_N-1:0]; // reg3
-// assign probe[2 * 32 +: 32] = pmem_do[63:32]; // reg7
-// assign probe[4 * 32 +: 32] = pmem_do[31:0];  // reg9
-
 ctrl #(
 		.PMEM_N         (PMEM_N         )
 	)
@@ -234,16 +230,53 @@ ctrl #(
 		.WIDLE_REG      (WIDLE_REG      ),
 
 		.start          (start          )
-
-		// .probe (probe)
 	);
 
 
 
 
-localparam N_MAC = 1;
-wire [DATA_WIDTH-1 : 0] 	mem_di;
-wire                        mem_we;
+// unified_buffer #(
+
+// 	)
+// 	unified_buffer_i
+// 	(
+// 		.clk		    (aclk			),
+// 		.rstn         	(aresetn		),
+
+		
+// 	);
+
+
+// pool_unit #(
+
+// 	)
+// 	pool_unit_i
+// 	(
+// 		.clk		    (aclk			),
+// 		.rstn         	(aresetn		),
+
+		
+// 	);
+
+
+// activation_unit #(
+
+// 	)
+// 	activation_unit_i
+// 	(
+// 		.clk		    (aclk			),
+// 		.rstn         	(aresetn		),
+// 	);
+
+
+
+
+
+parameter N_CONV_UNIT = 64;
+
+
+wire [N_CONV_UNIT-1:0] mem_we;
+wire [DATA_WIDTH-1:0] mem_di;
 
 data_writer
     #(
@@ -265,150 +298,44 @@ data_writer
     );
 
 
-wire [16*(N_MAC + 2)-1:0] wei_i;
-reg [16*(N_MAC + 2)-1:0] wei;
-reg [16*(N_MAC + 2)-1:0] fm;
-wire [15:0] res[0:N_MAC-1];
-reg [8:0] addr_b_r;
-
-// reg [16*N_MAC-1:0]       res_r;
-// reg [DATA_WIDTH-1:0] data_r;
-// reg [31:0] cnt_r;
-// wire [31:0] mux_sel;
-
-
-always @( posedge aclk )
-begin
-    if ( aresetn == 1'b0 ) begin
-        wei  <= 48'hfff1_0038_006E; // 110, 56, -15
-        fm <= 48'h0100_ffd2_ff9c; // -100, -46, 256
-		addr_b_r <= 0;
-		// data_r <= 0;
-		// cnt_r <= 0;
-    end 
-    else begin    
-
-        if (mem_we) begin   
-			addr_b_r <= addr_b_r + 1;	
-        end
-
-        // if (mem_we) begin   
-		// 	wei[16*(N_MAC + 2)-1:16] <= wei[16*(N_MAC + 1)-1:0];
-        //     wei[15:0] <= mem_di;
-
-		// 	fm[16*(N_MAC + 2)-1:16] <= wei[16*(N_MAC + 1)-1:0] + fm[16*(N_MAC + 1)-1:0];
-        //     fm[15:0] <= mem_di;			
-        // end 		
-		
-		// cnt_r <= cnt_r + 1;
-    end
-end    
-
-
 
 generate
 genvar i;
-	for (i=0; i < N_MAC; i=i+1) begin : GEN_i
+	for (i=0; i < N_CONV_UNIT; i=i+1) begin : GEN_CONV_UNIT
 
-		mac_v2 
-			#(
-				.N_MUL(3)
+		// Each with 4 groups of 3-DSP and 3 36kb-BRAM as weight buffer.
+		// Each perform 12 muls per cycle.
+		// We need 16 such unit along channel dir.
+		conv_unit #(
+				.DATA_WIDTH(DATA_WIDTH)
 			)
-			mac_v2_i
+			conv_unit_i
 			(
-				.clk 		(aclk),
-				.rstn		(aresetn),
+				.clk		    (aclk			),
+				.rstn         	(aresetn		),
 
-				.wei        (wei_i[16*i+:16*3]),
-				.fm         (fm[16*i+:16*3]),
-
-				.WSTART_REG (WSTART_REG),
-				.RSTART_REG (RSTART_REG),
-
-				.res (res[i])
+				.mem_en         (mem_we[i]      ),
+        		.mem_di         (mem_di         )
+			
 			);
-
-
 	end
 endgenerate 
 
-wire [63:0] DO;
-
-// assign wei_i = {DO[15:0], wei_i[16+:32]};
-assign wei_i = DO[47:0];
-
-// assign mux_sel = cnt_r;
-assign s_axis_tvalid = 1'b1;
-assign s_axis_tdata = res[0];
 
 
 
+// has state machine.
+// has 40 36kb-BRAM.
+accumulator #(
 
+	)
+	accumulator_i
+	(
+		.clk		    (aclk			),
+		.rstn         	(aresetn		),
 
-
-BRAM_SDP_MACRO #(
-	.BRAM_SIZE("36Kb"), // Target BRAM, "18Kb" or "36Kb" 
-	.DEVICE("7SERIES"), // Target device: "7SERIES" 
-	.WRITE_WIDTH(64),    // Valid values are 1-72 (37-72 only valid when BRAM_SIZE="36Kb")
-	.READ_WIDTH(64),     // Valid values are 1-72 (37-72 only valid when BRAM_SIZE="36Kb")
-	.DO_REG(0),         // Optional output register (0 or 1)
-	.INIT_FILE ("NONE"),
-	.SIM_COLLISION_CHECK ("ALL"),   // Collision check enable "ALL", "WARNING_ONLY", "GENERATE_X_ONLY" or "NONE" 
-	.SRVAL(72'h000000000000000000), // Set/Reset value for port output
-	.INIT(72'h000000000000000000),  // Initial values on output port
-	.WRITE_MODE("READ_FIRST")   // Specify "READ_FIRST" for same clock or synchronous clocks
-									// Specify "WRITE_FIRST for asynchronous clocks on ports
-) BRAM_SDP_MACRO_inst (
-
-	.DO(DO),         // Output read data port, width defined by READ_WIDTH parameter
-	.RDADDR(9'b000000001), // Input read address, width defined by read port depth
-	.RDCLK(aclk),   // 1-bit input read clock
-	.RDEN(1'b1),     // 1-bit input read port enable
-	
-	.REGCE(1'b0),   // 1-bit input read output register enable
-	.RST(~aresetn),       // 1-bit input reset
-	.WE(8'b11111111),         // Input write enable, width defined by write port depth
-
-	// .DI({{48{1'b0}}, mem_di[0+:16]}),         
-	.DI(mem_di[0+:16]),         
-
-	.WRADDR(addr_b_r), // Input write address, width defined by write port depth
-	.WRCLK(aclk),   // 1-bit input write clock
-	.WREN(mem_we)      // 1-bit input write port enable
-);
-
-
-
-
-
-
-// generate
-// genvar i;
-// 	for (i=0; i < N_MAC; i=i+1) begin : GEN_i
-
-// 		bram_dp 
-// 			#(
-// 				.N(5),
-// 				.B(64)
-// 			)
-// 			bram_dp_i
-// 			(
-			
-// 				.clka    (aclk)
-// 				.clkb    (aclk)
-// 				.ena     (1'b1)
-// 				.enb     (1'b1)
-// 				.wea     (1'b1)
-// 				.web     (1'b0)
-// 				.addra   (5'b00000)
-// 				.addrb   ()
-// 				.dia     (res[16*i+:16])
-// 				.dib     ()
-// 				.doa     ()
-// 				.dob     ()
-// 			);
-// 	end
-// endgenerate 
+		
+	);
 
 
 
