@@ -4,21 +4,19 @@
 
 module conv_unit
     #(
-        parameter N_WEIGHT_BUF = 5, 
-        parameter N_KERNEL_BUF = 3, 
         parameter N_DSP_GROUP = 4, 
         parameter N_DSP = 3,
         parameter B_PIXEL = 16,
         parameter B_INST = 32,
-        parameter B_LAYERPARA = 80,
+        parameter B_LAYERPARA = 96,
 
         parameter N_WEIBUF_X = 5,
         parameter N_KERBUF_X = 3,
         parameter B_DSHAPE = 48,
     
         parameter B_BUF_ADDR = 9, 
-        parameter B_BUF_DATA = 64, 
-        parameter DATA_WIDTH = 64
+        parameter DATA_WIDTH = 64,
+        parameter B_COORD = 8
     )
     (
         input wire               clk		     ,    
@@ -28,13 +26,12 @@ module conv_unit
         input wire                     layer_para_we ,
 
 
-        input wire                  wb_en,
+        input wire                  wb_we,
         input wire                  wb_clr,
-        input wire                  kb_en,
+        input wire                  kb_we,
         input wire                  kb_clr,
+        input wire [DATA_WIDTH-1:0] di,
 
-
-        input wire [DATA_WIDTH-1:0] mem_di,
 
         input wire [B_PIXEL-1:0] partial_sum_i,
         input wire [B_PIXEL-1:0] partial_sum_o,
@@ -50,33 +47,13 @@ module conv_unit
 
 
 
-reg kb_en_r ;
-reg kb_clr_r;
+wire [2*B_COORD-1:0] rd_coord [0:1];
 
+wire [DATA_WIDTH * N_WEIBUF_X-1:0] wb_do;
+wire [DATA_WIDTH * N_KERBUF_X-1:0] kb_do;
 
-
-wire [N_KERNEL_BUF-1:0]        kb_we;
-
-wire [B_BUF_ADDR-1:0]   wb_rdaddr [0:N_WEIGHT_BUF-1];
-wire [B_BUF_ADDR-1:0]   kb_rdaddr [0:N_KERNEL_BUF-1];
-
-wire [DATA_WIDTH*N_WEIBUF_X-1:0] wb_do;
-
-wire [DATA_WIDTH-1:0] kb_do       [0:N_KERNEL_BUF-1];
-
-reg [B_BUF_ADDR-1:0]   wb_wraddr [0:N_WEIGHT_BUF-1];
-reg [B_BUF_ADDR-1:0]   kb_wraddr [0:N_KERNEL_BUF-1];
-
-
-reg  [2:0] kb_wr_sel;
 reg  [2:0] wb_rd_sel [0:N_DSP-1];
 reg  [2:0] kb_rd_sel [0:N_DSP-1];
-
-
-
-reg  [15:0]              kb_cnt_r;
-wire [15:0]              kb_cnt;
-
 
 
 wire [B_PIXEL-1:0] partial_sum_i_arr [0:N_DSP_GROUP-1];
@@ -88,8 +65,11 @@ wire [B_INST-1:0] inst_o_arr [0:N_DSP_GROUP-1];
 wire [B_PIXEL*3-1:0] wei_i [0:N_DSP_GROUP-1];
 wire [B_PIXEL*3-1:0] ker_i [0:N_DSP_GROUP-1];
 
-
-
+wire [3*B_COORD-1:0] cur_coord [0:1];
+wire [B_COORD-1:0] c_i [0:1];
+wire [B_COORD-1:0] y_i [0:1];
+wire [B_COORD-1:0] x_i [0:1];
+wire [1:0] done_ld;
 
 // States.
 localparam	INIT_ST		       = 0;
@@ -102,76 +82,7 @@ reg			compute_state;
 
 reg [B_LAYERPARA-1:0] layer_para_r;
 
-
-wire [15:0] c_wei;
-wire [15:0] h_wei;
-wire [15:0] w_wei;
-wire [15:0] k_ker;
-wire [15:0] c_ker;
-
-
 integer i;
-
-
-
-
-
-
-
-
-strided_buffer
-    #(
-        .N_BUF_X    (N_WEIBUF_X), 
-        .N_DSP      (N_DSP)     ,
-        .B_DSHAPE   (B_DSHAPE)  ,
-        .DATA_WIDTH (DATA_WIDTH)
-    )
-    weight_buffer
-    (
-        .clk  (clk	)	    ,    
-        .rstn (rstn)         ,     
-
-        .dshape (layer_para_r[0*B_DSHAPE+:B_DSHAPE]),
-
-        .clr(wb_clr),
-        
-        .en(wb_en),
-        .di(mem_di),
-        
-
-        input wire [] rdaddr,
-        .do(wb_do)
-    );
-
-
-
-
-
-strided_buffer
-    #(
-        .N_BUF_X    (N_KERBUF_X), 
-        .N_DSP      (N_DSP)     ,
-        .B_DSHAPE   (B_DSHAPE)  ,
-        .DATA_WIDTH (DATA_WIDTH)
-    )
-    kernel_buffer
-    (
-        .clk  (clk	)	    ,    
-        .rstn (rstn)         ,     
-
-        .dshape (layer_para_r[1*B_DSHAPE+:B_DSHAPE]),
-
-        .clr(kb_clr),
-        
-        .en(kb_en),
-        .di(mem_di),
-        
-
-        input wire [] rdaddr,
-        .do(kb_do)
-    );
-
-
 
 
 
@@ -181,21 +92,12 @@ begin
 
         state	<= INIT_ST;
 
-    
-        for (i=0; i<N_KERNEL_BUF; i=i+1) kb_wraddr[i] <= 0;
-        
-    
         layer_para_r <= 0;
 
-        kb_cnt_r   <= 0;
-
-        kb_wr_sel <= 0;
-        
         for (i=0; i<N_DSP; i=i+1)begin
             wb_rd_sel[i] <= i[2:0];
             kb_rd_sel[i] <= i[2:0];
         end
-
 
     end 
     else begin    
@@ -203,53 +105,20 @@ begin
 		case(state)
 
 			INIT_ST:
-                if ()
+                if (x_i[0] >= 3 && done_ld[1])
                     state <= COMPUTE_ST;
 	
             COMPUTE_ST:
-
+                if()
 
 		endcase	
-
-
-
-        kb_en_r <= kb_en;
-        kb_clr_r <= kb_clr;
 
         if(layer_para_we)
             layer_para_r <= layer_para;
 
-
-
-
-        if (kb_clr_r == 1'b1)
-            kb_wr_sel <= 0;
-        else if (wb_en_r) begin
-
-            for (i=0; i<N_KERNEL_BUF; i=i+1) kb_wraddr[i] <= kb_wraddr[i] + kb_we[i];
-
-            if(kb_cnt == kb_n_eps)
-
-                kb_cnt_r <= 0;
-
-               
-
-                if(kb_wr_sel == N_KERNEL_BUF - 1)
-                    kb_wr_sel <= 0;
-                else
-                    kb_wr_sel <= kb_wr_sel + 1;
-            
-
-            else
-                kb_cnt_r <= kb_cnt;
-        end
-
-
-    
-
         for (i=0; i<N_DSP; i=i+1) begin
 
-            if (kb_rd_sel[i] == N_KERNEL_BUF - 1)    
+            if (kb_rd_sel[i] == N_KERBUF_X - 1)    
                 kb_rd_sel[i] <= 0;
             else 
                 kb_rd_sel[i] <= kb_rd_sel[i] + 1;
@@ -258,12 +127,6 @@ begin
     end
 end    
 
-
-assign c_ker = layer_para_r  [3*16+:16];
-assign k_ker = layer_para_r  [4*16+:16]; // assume square.
-
-// eps: entries per slice.
-assign kb_n_eps = (c_ker >> 6) * k_ker;
 
 
 // FSM outputs.
@@ -286,41 +149,77 @@ end
 
 
 
-// strided write.
-generate
-genvar k;
-	for (k=0; k < N_KERNEL_BUF; k=k+1) begin : GEN_KERNEL_BUF
+strided_buffer
+    #(
+        .N_BUF_X    (N_WEIBUF_X), 
+        .N_DSP      (N_DSP)     ,
+        .B_BUF_ADDR (B_BUF_ADDR),
+        .B_DSHAPE   (B_DSHAPE)  ,
+        .DATA_WIDTH (DATA_WIDTH),
+        .B_COORD    (B_COORD)
+    )
+    weight_buffer
+    (
+        .clk  (clk	)	    ,    
+        .rstn (rstn)         ,     
 
-        // wrapper for BRAM primitives.
-        bram_sdp #(
-                .B_ADDR(B_BUF_ADDR),
-                .B_DATA(B_BUF_DATA)
-        	)
-        	kernel_buffer_i
-        	(
-        		.clk		    (clk		),
-        		.rstn         	(rstn		),
+        .dshape (layer_para_r[0*B_DSHAPE+:B_DSHAPE]),
 
-                .rdaddr     (kb_rdaddr[k]             ),
-                .do         (kb_do[k]             ) ,
+        .clr(wb_clr),
+        
+        .we(wb_we),
+        .di(di),
+        
 
-                .we         (kb_we[k] ),
-                .wraddr     (kb_wraddr[k]             ),
-                .di         (mem_di_r             )
-                               
-        	);
-
-        assign kb_we[k] = kb_en_r & ((kb_wr_sel == k) ? 1'b1: 1'b0);
-
-	end
-endgenerate 
-
-assign kb_cnt = kb_cnt_r + 1;
+        .rd_coord(rd_coord[0]),
+        .do(wb_do), 
+        
+        .cur_coord(cur_coord[0]), 
+        .done_ld(done_ld[0])
+    );
 
 
 
 
 
+strided_buffer
+    #(
+        .N_BUF_X    (N_KERBUF_X), 
+        .N_DSP      (N_DSP)     ,
+        .B_BUF_ADDR (B_BUF_ADDR),
+        .B_DSHAPE   (B_DSHAPE)  ,
+        .DATA_WIDTH (DATA_WIDTH),
+        .B_COORD    (B_COORD)
+    )
+    kernel_buffer
+    (
+        .clk  (clk	)	    ,    
+        .rstn (rstn)         ,     
+
+        .dshape (layer_para_r[1*B_DSHAPE+:B_DSHAPE]),
+
+        .clr(kb_clr),
+        
+        .we(kb_we)              ,
+        .di(di)                 ,
+        
+
+        .rd_coord(rd_coord[1])         ,
+        .do(kb_do)              , 
+
+        .cur_coord(cur_coord[1]),
+        .done_ld(done_ld[1])
+    );
+
+
+
+assign c_i[0] = cur_coord[0][0*B_COORD+:B_COORD];
+assign y_i[0] = cur_coord[0][1*B_COORD+:B_COORD];
+assign x_i[0] = cur_coord[0][2*B_COORD+:B_COORD];
+
+assign c_i[1] = cur_coord[1][0*B_COORD+:B_COORD];
+assign y_i[1] = cur_coord[1][1*B_COORD+:B_COORD];
+assign x_i[1] = cur_coord[1][2*B_COORD+:B_COORD];
 
 
 
