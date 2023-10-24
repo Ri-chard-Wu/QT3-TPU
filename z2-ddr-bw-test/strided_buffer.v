@@ -56,7 +56,7 @@ reg  [3:0]            rx_rd_r   [0:N_DSP-1]; // remainder of x / N_BUF_X.
 reg  [B_COORD-1:0]    p_rd_r    [0:1];
 wire [B_COORD-1:0]    p_rd_next [0:1];
 wire [B_BUF_ADDR-1:0] rdaddr    [0:N_BUF_X-1];
-
+wire [B_BUF_ADDR-1:0] addr      [0:N_DSP-1];
 
 wire [7:0] n_wrap_c;
 
@@ -209,10 +209,9 @@ assign n_wrap_c = (c_i >> 6);
 
 
 // y * n_wrap_c + h_i * n_wrap_c * floor(x / N_BUF_X)
-assign rdaddr[rx_rd_r[0]] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[0]);
-assign rdaddr[rx_rd_r[1]] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[1]);
-assign rdaddr[rx_rd_r[2]] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[2]);
-
+assign addr[0] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[0]);
+assign addr[1] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[1]);
+assign addr[2] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[2]);
 
 
 
@@ -237,9 +236,9 @@ genvar i;
 
         assign we_i[i] = we_r & ((sel_wr == i) ? 1'b1: 1'b0);
 
-        assign rdaddr[i] = (i == rx_rd_r[0]) ? n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[0]):
-	                       (i == rx_rd_r[1]) ? n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[1]):
-                           (i == rx_rd_r[2]) ? n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[2]): 0;
+        assign rdaddr[i] = (i == rx_rd_r[0]) ? addr[0]:
+	                       (i == rx_rd_r[1]) ? addr[1]:
+                           (i == rx_rd_r[2]) ? addr[2]: 0;
         
         end
 endgenerate 
