@@ -214,11 +214,6 @@ assign rdaddr[rx_rd_r[1]] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[1]);
 assign rdaddr[rx_rd_r[2]] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[2]);
 
 
-if(rx_rd_r[0] == 1) begin
-    assign rdaddr[1  ] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[0]);
-    assign rdaddr[1+1] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[0]);
-    assign rdaddr[1+2] = n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[0]);
-end
 
 
 // strided write.
@@ -242,7 +237,11 @@ genvar i;
 
         assign we_i[i] = we_r & ((sel_wr == i) ? 1'b1: 1'b0);
 
-	end
+        assign rdaddr[i] = (i == rx_rd_r[0]) ? n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[0]):
+	                       (i == rx_rd_r[1]) ? n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[1]):
+                           (i == rx_rd_r[2]) ? n_wrap_c * (p_rd_r[1] + h_i * qx_rd_r[2]): 0;
+        
+        end
 endgenerate 
 
 
