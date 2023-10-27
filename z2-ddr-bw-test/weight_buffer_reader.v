@@ -32,8 +32,8 @@ wire  [3:0]           rx_base_next   ; // remainder of x / N_BUF_X.
 
 reg   [3:0]            qx_r     ; // quotient of x / N_BUF_X.
 reg   [3:0]            rx_r     ; // remainder of x / N_BUF_X.
-wire  [3:0]           qx_next   ; // quotient of x / N_BUF_X.
-wire  [3:0]           rx_next   ; // remainder of x / N_BUF_X.
+// wire  [3:0]           qx_next   ; // quotient of x / N_BUF_X.
+// wire  [3:0]           rx_next   ; // remainder of x / N_BUF_X.
 
 
 reg  [B_COORD-1:0]    p_r    [0:1];
@@ -64,6 +64,9 @@ begin
         qx_base_r <= 0;
         rx_base_r <= 0;        
 
+        qx_r <= 0;
+        rx_r <= 0;
+
         dp_r[0] <= 0;
         dp_r[1] <= 0;
 
@@ -87,11 +90,8 @@ begin
         if(compute_state == 1'b1) begin
         
             if(dp_r[1] == dp_lim[1]) begin // dy
-                
-                dp_r[1] <= 0;
 
-                qx_r <= qx_next;
-                rx_r <= rx_next;
+                dp_r[1] <= 0;
 
                 if(dp_r[0] == dp_lim[0]) begin // dx
 
@@ -105,13 +105,30 @@ begin
                         qx_base_r <= qx_base_next;
                         rx_base_r <= rx_base_next;
 
+                        qx_r <= qx_base_next;
+                        rx_r <= rx_base_next;            
                     end
-                    else 
-                        p_r[1] <= p_next[1];                
+                    else begin
+                        p_r[1] <= p_next[1];   
+
+                        qx_r <= qx_base_r;
+                        rx_r <= rx_base_r;
+                    end
                 end 
                 else begin
+
                     dp_r[0] <= dp_r[0] + 1;
+
+                    if (rx_r == N_BUF_X - 1) begin
+                        rx_r <= 0;
+                        qx_r <= qx_r + 1;
+                    end
+                    else begin
+                        rx_r <= rx_r + 1;
+                    end  
+
                 end
+
             end
             else begin
                 dp_r[1] <= dp_r[1] + 1;
@@ -128,14 +145,17 @@ end
 
 
 
+
 assign qx_base_next = (rx_base_r == N_BUF_X-1)? qx_base_r + 1 : qx_base_r    ;
 assign rx_base_next = (rx_base_r == N_BUF_X-1)? 0             : rx_base_r + 1;
 
+// assign rx_next = (dp_r[0] == 0) ? rx_base_r + 1:   : rx_r + 1;
+// assign qx_next = (dp_r[0] == 0) ? qx_base_r        : qx_r;
+    
+(rx_base_r + dp_r[0]) / N_BUF_X
+(rx_base_r + dp_r[0]) % N_BUF_X
 
-assign qx_next = (dp_r[0] == dp_lim[0]) ? qx_base_r :
-                 (rx_r == N_BUF_X-1)    ? qx_r + 1  : qx_r    ;
-assign rx_next = (dp_r[0] == dp_lim[0]) ? rx_base_r : 
-                 (rx_r == N_BUF_X-1)    ? 0         : rx_r + 1;
+
 
 
 assign p_next[0] = p_r[0] + 1;
