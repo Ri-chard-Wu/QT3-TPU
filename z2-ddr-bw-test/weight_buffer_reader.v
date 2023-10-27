@@ -16,31 +16,34 @@ module weight_buffer_reader
 
         input wire                  start,
         output wire [B_BUF_ADDR*N_BUF_X-1:0] rdaddr,
-
-        input wire [DATA_WIDTH * N_WEIBUF_X-1:0] di,
-        output wire [DATA_WIDTH-1:0]     do
-    
+        
+        output wire   [3:0] rd_sel
     );
 
 
 
 reg   [3:0]            qx_base_r     ; // quotient of x / N_BUF_X.
 reg   [3:0]            rx_base_r     ; // remainder of x / N_BUF_X.
-wire  [3:0]           qx_base_next   ; // quotient of x / N_BUF_X.
-wire  [3:0]           rx_base_next   ; // remainder of x / N_BUF_X.
+wire  [3:0]           qx_base_next   ; 
+wire  [3:0]           rx_base_next   ; 
 
 
-reg   [3:0]            qx_r     ; // quotient of x / N_BUF_X.
-reg   [3:0]            rx_r     ; // remainder of x / N_BUF_X.
-// wire  [3:0]           qx_next   ; // quotient of x / N_BUF_X.
-// wire  [3:0]           rx_next   ; // remainder of x / N_BUF_X.
+reg   [3:0]            qx_r     ;
+reg   [3:0]            rx_r     ;
 
 
-reg  [B_COORD-1:0]    p_r    [0:1];
-reg  [7:0]            dp_r [0:1];
-wire  [7:0]           dp_lim[0:1];
+reg  [B_COORD-1:0]    x_r;
+reg  [B_COORD-1:0]    y_r;
 
-wire [B_COORD-1:0]    p_next [0:1];
+reg  [7:0]            dx_r;
+reg  [7:0]            dy_r;
+
+wire  [7:0]           dx_lim;
+wire  [7:0]           dy_lim;
+
+wire [B_COORD-1:0]    x_next;
+wire [B_COORD-1:0]    y_next;
+
 wire [B_BUF_ADDR-1:0] addr     ;
 
 
@@ -67,10 +70,11 @@ begin
         qx_r <= 0;
         rx_r <= 0;
 
-        dp_r[0] <= 0;
-        dp_r[1] <= 0;
+        dx_r <= 0;
+        dy_r <= 0;
 
-        for (i=0; i<2; i=i+1) p_r[i] <= 0;
+        x_r <= 0;
+        y_r <= 0;
 
     end 
     else begin    
@@ -89,27 +93,29 @@ begin
 
         if(compute_state == 1'b1) begin
         
-            if(dp_r[1] == dp_lim[1]) begin // dy
+            // sweep [y, y + dy]
+            if(dy_r == dy_lim) begin  // if reach y + dy end.
 
-                dp_r[1] <= 0;
+                dy_r <= 0;
 
-                if(dp_r[0] == dp_lim[0]) begin // dx
+                // sweep [x, x + dx]
+                if(dx_r == dx_lim) begin  // if reach x + dx end.
 
-                    dp_r[0] <= 0;
+                    dx_r <= 0;
 
-                    if(p_next[1] == h_wei) begin // y & x
+                    if(y_next == h_wei) begin // reached the bottom of fm.
                         
-                        p_r[1] <= 0;
-                        p_r[0] <= p_next[0];
+                        y_r <= 0;
+                        x_r <= x_next;
 
                         qx_base_r <= qx_base_next;
                         rx_base_r <= rx_base_next;
 
-                        qx_r <= qx_base_next;
-                        rx_r <= rx_base_next;            
+                        qx_r      <= qx_base_next;
+                        rx_r      <= rx_base_next;            
                     end
                     else begin
-                        p_r[1] <= p_next[1];   
+                        y_r <= y_next;   
 
                         qx_r <= qx_base_r;
                         rx_r <= rx_base_r;
@@ -117,7 +123,7 @@ begin
                 end 
                 else begin
 
-                    dp_r[0] <= dp_r[0] + 1;
+                    dx_r <= dx_r + 1;
 
                     if (rx_r == N_BUF_X - 1) begin
                         rx_r <= 0;
@@ -126,17 +132,17 @@ begin
                     else begin
                         rx_r <= rx_r + 1;
                     end  
-
                 end
 
             end
             else begin
-                dp_r[1] <= dp_r[1] + 1;
+                dy_r <= dy_r + 1;
             end
 
         end
         else begin
-            for (i=0; i<2; i=i+1) p_r[i] <= 0;
+            x_r <= 0;
+            y_r <= 0;
         end
 
       
@@ -144,22 +150,12 @@ begin
 end    
 
 
-
-
 assign qx_base_next = (rx_base_r == N_BUF_X-1)? qx_base_r + 1 : qx_base_r    ;
 assign rx_base_next = (rx_base_r == N_BUF_X-1)? 0             : rx_base_r + 1;
 
-// assign rx_next = (dp_r[0] == 0) ? rx_base_r + 1:   : rx_r + 1;
-// assign qx_next = (dp_r[0] == 0) ? qx_base_r        : qx_r;
-    
-(rx_base_r + dp_r[0]) / N_BUF_X
-(rx_base_r + dp_r[0]) % N_BUF_X
 
-
-
-
-assign p_next[0] = p_r[0] + 1;
-assign p_next[1] = p_r[1] + 1;
+assign x_next = x_r + 1;
+assign y_next = y_r + 1;
 
 assign c_wei = wei_shape[0*16+:16];
 assign h_wei = wei_shape[1*16+:16];
@@ -171,11 +167,11 @@ assign w_ker = ker_shape[2*16+:16];
 
 assign n_wrap_c = (c_wei >> 6);
 
-assign dp_lim[0] = w_ker - 1;
-assign dp_lim[1] = h_ker * n_wrap_c - 1;
+assign dx_lim = w_ker - 1;
+assign dy_lim = h_ker * n_wrap_c - 1;
 
 // y * n_wrap_c + h_wei * n_wrap_c * floor(x / N_BUF_X)
-assign addr = n_wrap_c * (p_r[1] + h_wei * qx_r) + dp_r[1];
+assign addr = n_wrap_c * (y_r + h_wei * qx_r) + dy_r;
 
 
 
@@ -184,19 +180,10 @@ generate
 genvar i;
 	for (i=0; i < N_BUF_X; i=i+1) begin : GEN_BUF
 
-        assign rdaddr[i*B_BUF_ADDR+:B_BUF_ADDR] = (i == rx_base_r) ? addr: 0;
-        
-
+        assign rdaddr[i*B_BUF_ADDR+:B_BUF_ADDR] = (i == rx_r) ? addr: 0;
     end
 endgenerate 
 
-
-assign do = (0 == rx_r) ? di[0*DATA_WIDTH+:DATA_WIDTH] :
-            (1 == rx_r) ? di[1*DATA_WIDTH+:DATA_WIDTH] :
-            (2 == rx_r) ? di[2*DATA_WIDTH+:DATA_WIDTH] :
-            (3 == rx_r) ? di[3*DATA_WIDTH+:DATA_WIDTH] :
-            (4 == rx_r) ? di[4*DATA_WIDTH+:DATA_WIDTH] : 0;
-
-
+assign rd_sel = rx_r;
 
 endmodule

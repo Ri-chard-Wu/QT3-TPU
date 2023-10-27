@@ -19,35 +19,34 @@ module conv_unit
         parameter B_COORD = 8
     )
     (
-        input wire               clk		     ,    
-        input wire               rstn           ,     
+        input wire                     clk		    ,    
+        input wire                     rstn         ,     
 
-        input wire [B_LAYERPARA-1:0]   layer_para       ,
+        input wire [B_LAYERPARA-1:0]   layer_para    ,
         input wire                     layer_para_we ,
 
 
-        input wire                  wb_we,
-        input wire                  wb_clr,
-        input wire   [N_KERNEL-1:0]  kb_we,
-        input wire   [N_KERNEL-1:0]  kb_clr,
-        input wire [DATA_WIDTH-1:0] di,
+        input wire                   wb_we    ,
+        input wire                   wb_clr   ,
+        output wire                  wb_empty ,
+        input wire   [N_KERNEL-1:0]  kb_we    ,
+        input wire   [N_KERNEL-1:0]  kb_clr   ,
+        output wire                  kb_empty ,
+        input wire [DATA_WIDTH-1:0]  di    ,
 
 
         input wire [B_PIXEL-1:0] partial_sum_i,
         input wire [B_PIXEL-1:0] partial_sum_o,
 
         input wire [B_INST-1:0] inst_i,
-        input wire [B_INST-1:0] inst_o
+        input wire [B_INST-1:0] inst_o,
 
-        // input wire               WSTART_REG ,
-        // input wire               RSTART_REG, 
-        
-        // output wire [15:0]       res
+ 
+        output wire [15:0]       res
     );
 
 
 
-wire [2*B_COORD-1:0] rd_coord [0:1];
 
 wire [DATA_WIDTH-1:0] wb_do;
 wire [DATA_WIDTH-1:0] kb_do_k [0:N_KERNEL-1];
@@ -140,7 +139,8 @@ end
 
 
 
-
+wire   [3:0] wb_rd_sel;
+wire [N_WEIBUF_X*DATA_WIDTH-1:0] wb_do_raw;
 
 weight_buffer_reader
     #(
@@ -158,11 +158,11 @@ weight_buffer_reader
         .wei_shape(layer_para_r[0*B_SHAPE+:B_SHAPE]),
         .ker_shape(layer_para_r[1*B_SHAPE+:B_SHAPE]),
 
-        .start   (start)    ,
-        .rdaddr  (wb_rdaddr),
+        .start   (start)         ,
+        .rdaddr  (wb_rdaddr)     ,        
+        .rd_sel  (wb_rd_sel)     ,
 
-        .di          (wb_do_raw),
-        .do          (wb_do)
+        .wb_rptr  (wb_rptr)
     );
 
 
@@ -191,11 +191,19 @@ strided_buffer
         .rdaddr(wb_rdaddr),
         .do    (wb_do_raw), 
         
+
+        .wb_wptr  (wb_wptr)
         // .cur_coord(cur_coord[0]), 
         // .done_ld(done_ld[0])
     );
 
 
+
+assign wb_do = (0 == wb_rd_sel) ? wb_do_raw[0*DATA_WIDTH+:DATA_WIDTH] :
+               (1 == wb_rd_sel) ? wb_do_raw[1*DATA_WIDTH+:DATA_WIDTH] :
+               (2 == wb_rd_sel) ? wb_do_raw[2*DATA_WIDTH+:DATA_WIDTH] :
+               (3 == wb_rd_sel) ? wb_do_raw[3*DATA_WIDTH+:DATA_WIDTH] :
+               (4 == wb_rd_sel) ? wb_do_raw[4*DATA_WIDTH+:DATA_WIDTH] : 0;
 
 
 
@@ -314,6 +322,6 @@ assign partial_sum_o = partial_sum_o_arr[N_DSP_GROUP-1];
 assign inst_o = inst_o_arr[N_DSP_GROUP-1];
 
 
-
+assign wb_empty = (wb_rptr == wb_wptr);
 
 endmodule

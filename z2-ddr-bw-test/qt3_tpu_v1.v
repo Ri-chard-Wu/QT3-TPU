@@ -6,11 +6,17 @@ module qt3_tpu_v1
 		parameter ID_WIDTH					= 6				,
 		parameter DATA_WIDTH				= 64			,
 
-		// max can go up to 15? test it.
 		parameter BURST_LENGTH				= 15				, 
+		
+		parameter  B_BURST_LENGTH            = 4,
+		
+		parameter B_PIXEL = 16, 
+		parameter B_INST = 32 ,
 
-		// z2 only support 4, but in simulation we must use 8.
-		parameter  B_BURST_LENGTH            = 4             
+		parameter N_KERNEL = 3,
+		parameter N_CONV_UNIT = 64
+		
+
 	)
 	( 	
 
@@ -162,6 +168,9 @@ wire [31:0] partial_sum;
 wire [2 * 32 - 1:0] stimulus;
 wire [5 * 32 - 1:0] probe;
 
+
+
+
 /**********************/
 /* Begin Architecture */
 /**********************/
@@ -206,6 +215,151 @@ axi_slv axi_slv_i
 	);
 
 
+
+
+wire [B_PIXEL-1:0] partial_sum_i [0:N_CONV_UNIT-1];
+wire [B_PIXEL-1:0] partial_sum_o [0:N_CONV_UNIT-1];
+wire [B_INST-1:0]  inst_i        [0:N_CONV_UNIT-1];
+wire [B_INST-1:0]  inst_o        [0:N_CONV_UNIT-1];
+
+
+wire   [N_CONV_UNIT-1:0]  wb_we     				;
+wire   [N_CONV_UNIT-1:0]  wb_clr    				;
+wire   [N_CONV_UNIT-1:0]  wb_empty  				;
+wire   [N_KERNEL-1:0]     kb_we    [0:N_CONV_UNIT-1];
+wire   [N_KERNEL-1:0]     kb_clr   [0:N_CONV_UNIT-1];
+wire   [N_CONV_UNIT-1:0]  kb_empty 					;
+wire [DATA_WIDTH-1:0]     di        			    ;
+
+
+reg [3:0] cu_sel_r;
+reg [3:0] cu_sel_wei;
+reg [3:0] cu_sel_ker;
+
+wire [3:0] cu_sel_i;
+
+
+
+
+localparam	INIT_ST		       = 0;
+localparam	LOAD_WEIGHT_ST     = 1;
+localparam	LOAD_KERNEL_ST     = 2;
+
+reg			init_state;
+reg			load_weight_state;
+reg			load_kernel_state;
+
+reg [3:0] state;
+
+always @( posedge aclk )
+begin
+    if ( aresetn == 1'b0 ) begin
+		
+		state	   <= INIT_ST;
+
+		cu_sel_r   <= 0;
+		cu_sel_wei <= 0;
+		cu_sel_ker <= 0;	
+    end 
+    else begin    
+
+
+		case(state)
+
+			INIT_ST:
+                if (load_mode == 0)
+                    state <= WAIT_WEIGHT_ST;
+				else if (load_mode == 0)
+					state <= WAIT_KERNEL_ST;
+
+			WAIT_WEIGHT_ST:
+				if (mem_we)
+					state <= LOAD_WEIGHT_ST;
+
+			WAIT_KERNEL_ST:
+				if (mem_we)
+					state <= LOAD_KERNEL_ST;
+
+
+			LOAD_WEIGHT_ST:
+				if () // pause loading. Need keep the values of associated counters, states.
+					state <= INIT_ST;
+				else if (load_cnt == len)
+
+			LOAD_KERNEL_ST:
+
+
+		endcase	
+
+		if (wait_weight_state == 1'b1)
+
+
+
+
+		if (load_kernel_state == 1'b1)
+			cu_sel_ker <= cu_sel_ker + 1;
+		else 
+			cu_sel_ker <= cu_sel_ker;
+
+
+		if (load_weight_state == 1'b1)
+			cu_sel_wei <= cu_sel_wei + 1;
+		else 
+			cu_sel_wei <= cu_sel_wei;
+    end
+end    
+
+// Perform `nburst_r` number of consecutive bursts, each burst 
+	// reads 16 consecutive 64-bit data at a time (128 bytes).
+// Should align the data to 128-bytes chuncks.
+assign RSTART_REG  = wait_weight_state;	 
+assign RADDR_REG   = addr;		
+assign RNBURST_REG = {{8{1'b0}}, nburst_r};
+
+// FSM outputs.
+always @(state) begin
+
+    init_state	        = 0;
+	wait_weight_state   = 0;
+
+	case (state)
+
+		INIT_ST:
+			init_state       	= 1;
+
+		WAIT_WEIGHT_ST
+			wait_weight_state   = 1;
+	endcase
+end
+
+
+
+
+assign cu_sel_i = (load_mode == 0) ? cu_sel_wei : cu_sel_ker;
+
+
+fifo_reader
+    #(
+        .DATA_WIDTH  (DATA_WIDTH),
+		.N_CONV_UNIT (N_CONV_UNIT)
+    )
+    fifo_reader_i
+	( 
+        .clk    		(aclk			),
+		.rstn			(aresetn		),
+
+		// AXIS Slave.
+		.s_axis_tdata	(m_axis_tdata  ),
+		.s_axis_tvalid	(m_axis_tvalid ),
+		.s_axis_tready	(m_axis_tready ),
+
+		// Output data.
+        .mem_we         (mem_we         ),
+        .mem_di         (di             )
+    );
+
+
+
 ctrl #(
 		.PMEM_N         (PMEM_N         )
 	)
@@ -229,8 +383,111 @@ ctrl #(
 		.WNBURST_REG	(WNBURST_REG	),
 		.WIDLE_REG      (WIDLE_REG      ),
 
-		.start          (start          )
+		.start          (start          ),
+
+
+
+		.addr           (addr           ),
+		.len            (len            ),
+
+		.load_mode      (load_mode      ),
 	);
+
+// wb_empty, kb_empty
+// wb_clr, kb_clr
+
+
+generate
+genvar i;
+	for (i=0; i < N_CONV_UNIT; i=i+1) begin : GEN_CONV_UNIT
+
+
+        assign partial_sum_i[i] = (i==0) ? 0 : partial_sum_o_arr[i-1];
+        assign inst_i[i] = (i==0) ? conv_inst : inst_o[i-1];
+
+		// Each with 4 groups of 3-DSP, 5 36kb-BRAM as weight buffer,  3 36kb-BRAM as kernel buffer.
+		// Each perform 12 muls per cycle.
+		// We need 16 such unit along channel dir.
+		conv_unit #(
+				.DATA_WIDTH(DATA_WIDTH),
+				.N_KERNEL  (N_KERNEL)
+			)
+			conv_unit_i
+			(
+				.clk		    (aclk			),
+				.rstn         	(aresetn		),
+
+				input wire [B_LAYERPARA-1:0]   layer_para    ,
+				input wire                     layer_para_we ,
+
+				.wb_we          (wb_we[i]       ),
+				.wb_clr         (wb_clr[i]      ),
+				.wb_empty       (wb_empty[i]    ),
+				.kb_we          (kb_we[i]       ),
+				.kb_clr         (kb_clr[i]      ),
+				.kb_empty       (kb_empty[i]    ),
+				.di             (di             ),
+
+
+				.partial_sum_i  (partial_sum_i[i]),
+				.partial_sum_o  (partial_sum_o[i]),
+				.inst_i			(inst_i[i]		  ),
+				.inst_o			(inst_o[i]		  ),
+			);
+		
+		assign en[i]    = (cu_sel_i == i) ? 1 : 0;
+		assign wb_we[i] = en[i] & ((load_mode == 0) ? mem_we : 0);
+		assign kb_we[i] = en[i] & ((load_mode == 1) ? mem_we : 0);
+		
+	end
+endgenerate 
+
+
+
+
+activation_unit #(
+
+	)
+	activation_unit_i
+	(
+		.clk		    (aclk			             ),
+		.rstn         	(aresetn					 ),
+
+		.inst           (act_inst                    ),
+		.di             (partial_sum_o[N_CONV_UNIT-1]),
+		.do				()
+	);
+
+
+
+// data_writer
+//     #(
+//         .DATA_WIDTH  (DATA_WIDTH),
+// 		.N_CONV_UNIT (N_CONV_UNIT)
+//     )
+//     data_writer_i
+// 	( 
+//         .clk    		(aclk			),
+// 		.rstn			(aresetn			),
+
+// 		// AXIS Slave.
+// 		.s_axis_tdata	(m_axis_tdata  ),
+// 		.s_axis_tvalid	(m_axis_tvalid ),
+// 		.s_axis_tready	(m_axis_tready ),
+
+// 		// Output data.
+//         // .mem_we         (mem_we         ),
+
+// 		.wb_we          (wb_we      ),
+// 		.wb_clr         (wb_clr     ),
+// 		.wb_empty       (wb_empty   ),
+// 		.kb_we          (kb_we      ),
+// 		.kb_clr         (kb_clr     ),
+// 		.kb_empty       (kb_empty   ),
+//         .mem_di         (di         )
+//     );
+
+
 
 
 
@@ -259,83 +516,18 @@ ctrl #(
 // 	);
 
 
-// activation_unit #(
+// // has state machine.
+// // has 40 36kb-BRAM.
+// accumulator #(
 
 // 	)
-// 	activation_unit_i
+// 	accumulator_i
 // 	(
 // 		.clk		    (aclk			),
 // 		.rstn         	(aresetn		),
-// 	);
-
-
-
-
-
-parameter N_CONV_UNIT = 64;
-
-
-wire [N_CONV_UNIT-1:0] mem_we;
-wire [DATA_WIDTH-1:0] mem_di;
-
-data_writer
-    #(
-        .DATA_WIDTH(DATA_WIDTH)
-    )
-    data_writer_i
-	( 
-        .clk    		(aclk			),
-		.rstn			(aresetn			),
-
-		// AXIS Slave.
-		.s_axis_tdata	(m_axis_tdata  ),
-		.s_axis_tvalid	(m_axis_tvalid ),
-		.s_axis_tready	(m_axis_tready ),
-
-		// Output data.
-        .mem_we         (mem_we         ),
-        .mem_di         (mem_di         )
-    );
-
-
-
-generate
-genvar i;
-	for (i=0; i < N_CONV_UNIT; i=i+1) begin : GEN_CONV_UNIT
-
-		// Each with 4 groups of 3-DSP and 3 36kb-BRAM as weight buffer.
-		// Each perform 12 muls per cycle.
-		// We need 16 such unit along channel dir.
-		conv_unit #(
-				.DATA_WIDTH(DATA_WIDTH)
-			)
-			conv_unit_i
-			(
-				.clk		    (aclk			),
-				.rstn         	(aresetn		),
-
-				.mem_en         (mem_we[i]      ),
-        		.mem_di         (mem_di         )
-			
-			);
-	end
-endgenerate 
-
-
-
-
-// has state machine.
-// has 40 36kb-BRAM.
-accumulator #(
-
-	)
-	accumulator_i
-	(
-		.clk		    (aclk			),
-		.rstn         	(aresetn		),
 
 		
-	);
+// 	);
 
 
 

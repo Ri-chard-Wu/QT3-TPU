@@ -48,21 +48,23 @@ typedef enum{
 reg  [63:0] inst_r;
 
 wire [7:0]  opcode;     // 8 bit
-wire [31:0] start_addr; // 32 bit
-wire [23:0] nburst;        // 24 bit 
+wire [31:0] imm; // 32 bit
+// wire [31:0] start_addr; // 32 bit
+// wire [23:0] nburst;        // 24 bit 
 
 reg [31:0] start_addr_r;    // 32 bit
 reg [23:0] nburst_r;        // 24 bit 
 
 
 assign opcode		    = inst_r[63:56]; 
-assign start_addr		= inst_r[55:24];
-assign nburst	        = inst_r[23:0];      
+assign addr		        = inst_r[55:24];
+assign len		        = inst_r[23:0];
+// assign start_addr		= inst_r[55:24];
+// assign nburst	        = inst_r[23:0];      
 
 
 reg [31:0] cnt_read_time;
 
-reg [31:0] pv_1;
 
 
 reg     [PMEM_N-1:0]	 	pc_r;
@@ -101,20 +103,18 @@ always @(posedge clk) begin
 	if (rstn == 1'b0) begin
     
 		state		      <= INIT_ST;
-        // inst              <= 64'h0100000000010000; // 0x01 + 0x00000000 + 0x0100 + dont-care's.
 		cnt_read_time     <= 0;
         
 		pc_r			<= 0;
 		inst_r			<= 0;
 
   
-        start_addr_r  <= 0;
+        // start_addr_r  <= 0;
         nburst_r      <= 0;      
         
-        pv_1 <= 0;
 	end
 	else begin
-		
+		 
         
 		case (state)
 
@@ -133,8 +133,9 @@ always @(posedge clk) begin
                 state <= DECODE_ST;
 
             DECODE_ST:
-				if ( opcode == 8'b00000001 ) // read
+				if ( opcode == 8'b00000001 )     // load weight
 					state <= DDR_READ_INIT_ST;
+
 				else if ( opcode == 8'b00000010 ) // end
 					state <= DDR_WRITE_INIT_ST;                        
 				else if ( opcode == 8'b00111111 ) // end
@@ -189,8 +190,8 @@ always @(posedge clk) begin
         
 
 
-        start_addr_r <= start_addr;
-        nburst_r     <= nburst    ;
+        // start_addr_r <= start_addr;
+        // nburst_r     <= nburst    ;
 	end	
 end
 
