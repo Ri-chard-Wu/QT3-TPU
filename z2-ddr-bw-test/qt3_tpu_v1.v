@@ -14,8 +14,9 @@ module qt3_tpu_v1
 		parameter B_INST = 32 ,
 
 		parameter N_KERNEL = 3,
-		parameter N_CONV_UNIT = 64
-		
+		parameter N_CONV_UNIT = 64,
+		parameter FW    = 253,
+		parameter UNIT_BURSTS = 2048
 
 	)
 	( 	
@@ -240,16 +241,60 @@ wire [3:0] cu_sel_i;
 
 
 
+wire          fifo_wr_en_i;
+wire [FW-1:0] fifo_din_i;
+wire 		  fifo_ready_i;
+
 
 localparam	INIT_ST		       = 0;
 localparam	LOAD_WEIGHT_ST     = 1;
 localparam	LOAD_KERNEL_ST     = 2;
 
 reg			init_state;
-reg			load_weight_state;
+reg			load_wei_state;
 reg			load_kernel_state;
 
 reg [3:0] state;
+
+
+
+
+
+ctrl #(
+		.PMEM_N  (PMEM_N         ),
+		.FW      (FW)
+	)
+	ctrl_i
+	(
+		.clk		    (aclk			),
+		.rstn         	(aresetn		),
+
+		.pmem_addr      (pmem_addr      ),
+		.pmem_do        (pmem_do        ),
+
+		.START_REG      (START_REG      ),
+
+		.start          (start          ),
+
+        .fifo_wr_en     (fifo_wr_en_i),
+        .fifo_din       (fifo_din_i  ),
+		.fifo_ready     (fifo_ready_i)
+	);
+
+
+// assign fifo_din = 	{  opcode_i   ,
+//                         page_i     ,
+//                         oper_i     ,
+// 						   reg_dout6_i,
+// 						   reg_dout5_i,
+// 						   reg_dout4_i,
+// 						   reg_dout3_i,
+// 						   reg_dout2_i,
+//                         reg_dout1_i,
+// 						   reg_dout0_i	
+//                     };
+
+
 
 always @( posedge aclk )
 begin
@@ -263,87 +308,106 @@ begin
     end 
     else begin    
 
-
 		case(state)
 
 			INIT_ST:
-                if (load_mode == 0)
-                    state <= WAIT_WEIGHT_ST;
-				else if (load_mode == 0)
-					state <= WAIT_KERNEL_ST;
-
-			WAIT_WEIGHT_ST:
-				if (mem_we)
-					state <= LOAD_WEIGHT_ST;
-
-			WAIT_KERNEL_ST:
-				if (mem_we)
-					state <= LOAD_KERNEL_ST;
+                if (fifo_wr_en_i == 0)
+                    state <= INIT_WEI_ST;
+			
+			LATCH_ST:
+				state <= LOAD_WEI_ST;
 
 
-			LOAD_WEIGHT_ST:
-				if () // pause loading. Need keep the values of associated counters, states.
+			// load wei until sufficient -> load fm until done -> load wei until done -> pre-load next layer.
+			LOAD_WEI_ST:
+				if (wb_sufficient_i && ~fb_done_i)  // done loading all wei, but not all fm.
+					state <= LOAD_FM_ST;
+				else if(wb_done_i)
 					state <= INIT_ST;
-				else if (load_cnt == len)
-
-			LOAD_KERNEL_ST:
-
-
+					
+			LOAD_FM_ST:
+				if (fb_done_i)
+					state <= LOAD_WEI_ST;
 		endcase	
 
-		if (wait_weight_state == 1'b1)
 
 
+		if (latch_state == 1'b1) begin
+			wei_addr_r          <= wei_addr;
+			wei_n_rema_bursts_r <= wei_n_rema_bursts;
+			wei_n_bursts_r		<= wei_n_bursts_next;
+			
+			cu_sel_wei <= 0;
+		end
+		else if (load_wei_state == 1'b1) begin
+			wei_addr_r          <= wei_addr_r + wei_n_bursts_r;
+			wei_n_rema_bursts_r <= wei_n_rema_bursts_r - wei_n_bursts_r;
+			wei_n_bursts_r      <= wei_n_bursts_next;
 
+			cu_sel_wei <= cu_sel_wei_next;
+		end
 
-		if (load_kernel_state == 1'b1)
-			cu_sel_ker <= cu_sel_ker + 1;
-		else 
-			cu_sel_ker <= cu_sel_ker;
-
-
-		if (load_weight_state == 1'b1)
-			cu_sel_wei <= cu_sel_wei + 1;
-		else 
-			cu_sel_wei <= cu_sel_wei;
     end
 end    
 
-// Perform `nburst_r` number of consecutive bursts, each burst 
-	// reads 16 consecutive 64-bit data at a time (128 bytes).
-// Should align the data to 128-bytes chuncks.
-assign RSTART_REG  = wait_weight_state;	 
-assign RADDR_REG   = addr;		
-assign RNBURST_REG = {{8{1'b0}}, nburst_r};
+
+assign wei_n_bursts_next = (UNIT_BURSTS > wei_n_rema_bursts) ? wei_n_rema_bursts : UNIT_BURSTS;
+assign cu_sel_wei_next = (mem_we == 1'b1) ? cu_sel_wei + 1 : cu_sel_wei;
+
+
+
+assign wei_addr 		 = fifo_din_i[31:0];
+assign wei_n_last_burst  = fifo_din_i[38:32];
+assign wei_n_rema_bursts = fifo_din_i[51:39];
+// assign wei_n        	= fifo_din_i[63:52];
+
+assign fm_addr 	  	 	= fifo_din_i[95:64];
+assign fm_n_last_burst  = fifo_din_i[102:96];
+assign fm_n_bursts 		= fifo_din_i[127:103];
+
+assign wei_shape        = fifo_din_i[159:128];
+assign fm_shape         = fifo_din_i[191:160];
+assign out_addr         = fifo_din_i[223:192];
+
+assign RSTART_REG  = load_wei_state | load_fm_state;	 
+assign RADDR_REG   = (load_wei_state) ? wei_addr_r :
+					 (load_fm_state)  ? fm_addr_r : 0;
+assign RNBURST_REG = (load_wei_state) ? wei_n_bursts_r :
+				     (load_fm_state)  ? fm_n_bursts : 0; 
+
+
 
 // FSM outputs.
 always @(state) begin
 
     init_state	        = 0;
-	wait_weight_state   = 0;
+	load_wei_state   = 0;
 
 	case (state)
 
 		INIT_ST:
 			init_state       	= 1;
 
-		WAIT_WEIGHT_ST
-			wait_weight_state   = 1;
+		LOAD_WEIGHT_ST
+			load_wei_state   = 1;
 	endcase
 end
 
-
-
+assign fifo_ready_i = init_state;
 
 assign cu_sel_i = (load_mode == 0) ? cu_sel_wei : cu_sel_ker;
 
 
-fifo_reader
+
+
+
+
+ddr_buffer_reader
     #(
         .DATA_WIDTH  (DATA_WIDTH),
 		.N_CONV_UNIT (N_CONV_UNIT)
     )
-    fifo_reader_i
+    ddr_buffer_reader_i
 	( 
         .clk    		(aclk			),
 		.rstn			(aresetn		),
@@ -358,40 +422,6 @@ fifo_reader
         .mem_di         (di             )
     );
 
-
-
-ctrl #(
-		.PMEM_N         (PMEM_N         )
-	)
-	ctrl_i
-	(
-		.clk		    (aclk			),
-		.rstn         	(aresetn		),
-
-		.pmem_addr      (pmem_addr        ),
-		.pmem_do        (pmem_do          ),
-
-		.START_REG      (START_REG),
-
-		.RSTART_REG		(RSTART_REG		),
-		.RADDR_REG		(RADDR_REG		),
-		.RNBURST_REG	(RNBURST_REG	),
-		.RIDLE_REG      (RIDLE_REG      ),
-
-		.WSTART_REG		(WSTART_REG		),
-		.WADDR_REG		(WADDR_REG		),
-		.WNBURST_REG	(WNBURST_REG	),
-		.WIDLE_REG      (WIDLE_REG      ),
-
-		.start          (start          ),
-
-
-
-		.addr           (addr           ),
-		.len            (len            ),
-
-		.load_mode      (load_mode      ),
-	);
 
 // wb_empty, kb_empty
 // wb_clr, kb_clr
