@@ -16,7 +16,7 @@ module qt3_tpu_v1
 		parameter N_KERNEL = 3,
 		parameter N_CONV_UNIT = 64,
 		parameter FW    = 253,
-		parameter UNIT_BURSTS = 2048
+		parameter UNIT_BURSTS = 2048 // need to be power of 2.
 
 	)
 	( 	
@@ -153,7 +153,7 @@ wire            START_REG;
 wire			RSTART_REG	;
 wire	[31:0]	RADDR_REG	;
 wire	[31:0]	RNBURST_REG	;
-wire            RIDLE_REG   ;
+wire            RDONE_REG   ;
 
 wire			WSTART_REG	;
 wire	[31:0]	WADDR_REG	;
@@ -215,6 +215,8 @@ axi_slv axi_slv_i
 		
 	);
 
+localparam BYTES_PER_AXI_TRANSFER	= DATA_WIDTH / 8; // 8 bytes.
+localparam BYTES_PER_BURST			= (BURST_LENGTH + 1) * BYTES_PER_AXI_TRANSFER; // 16 * 8 = 128 bytes.
 
 
 
@@ -227,36 +229,40 @@ wire [B_INST-1:0]  inst_o        [0:N_CONV_UNIT-1];
 wire   [N_CONV_UNIT-1:0]  wb_we     				;
 wire   [N_CONV_UNIT-1:0]  wb_clr    				;
 wire   [N_CONV_UNIT-1:0]  wb_empty  				;
-wire   [N_KERNEL-1:0]     kb_we    [0:N_CONV_UNIT-1];
-wire   [N_KERNEL-1:0]     kb_clr   [0:N_CONV_UNIT-1];
-wire   [N_CONV_UNIT-1:0]  kb_empty 					;
-wire [DATA_WIDTH-1:0]     di        			    ;
-
-
-reg [3:0] cu_sel_r;
-reg [3:0] cu_sel_wei;
-reg [3:0] cu_sel_ker;
-
-wire [3:0] cu_sel_i;
+wire   [N_KERNEL-1:0]     fb_we    [0:N_CONV_UNIT-1];
+wire   [N_KERNEL-1:0]     fb_clr   [0:N_CONV_UNIT-1];
+wire   [N_CONV_UNIT-1:0]  fb_empty 					;
+wire [DATA_WIDTH-1:0]     mem_di        			    ;
 
 
 
 wire          fifo_wr_en_i;
-wire [FW-1:0] fifo_din_i;
+wire [FW-1:0] fifo_din_i  ;
 wire 		  fifo_ready_i;
 
 
-localparam	INIT_ST		       = 0;
-localparam	LOAD_WEIGHT_ST     = 1;
-localparam	LOAD_KERNEL_ST     = 2;
+reg  [3:0] wei_cu_sel;
+reg  [3:0] ftm_cu_sel;
+wire [3:0] cu_sel_i;
 
-reg			init_state;
-reg			load_wei_state;
-reg			load_kernel_state;
+
+localparam INIT_ST     = 0;
+localparam WEI_LOAD_ST = 1;   
+localparam WEI_INIT_ST = 2;    
+localparam WEI_INCR_ST = 3;    
+localparam FM_LOAD_ST  = 4;  
+localparam FM_INIT_ST  = 5;
+localparam FM_INCR_ST  = 6;
+
+reg init_st	   ;
+reg wei_load_st;
+reg wei_init_st;
+reg wei_incr_st;
+reg ftm_load_st;
+reg ftm_init_st;
+reg ftm_incr_st;
 
 reg [3:0] state;
-
-
 
 
 
@@ -282,17 +288,54 @@ ctrl #(
 	);
 
 
-// assign fifo_din = 	{  opcode_i   ,
-//                         page_i     ,
-//                         oper_i     ,
-// 						   reg_dout6_i,
-// 						   reg_dout5_i,
-// 						   reg_dout4_i,
-// 						   reg_dout3_i,
-// 						   reg_dout2_i,
-//                         reg_dout1_i,
-// 						   reg_dout0_i	
-//                     };
+
+
+wire [31:0] wei_addr 		    ;
+wire [6:0]  wei_n_last_burst    ;
+wire [24:0] wei_n_rema_bursts   ;
+
+wire [31:0] ftm_addr 	  	    ;
+wire [6:0]  ftm_n_last_burst    ;
+wire [24:0] ftm_n_rema_bursts   ;
+
+wire [31:0] wei_shape           ;
+wire [31:0] ftm_shape           ;
+wire [31:0] out_addr            ;
+
+
+
+reg [31:0] wei_addr_r 		   ;
+reg [24:0] wei_n_rema_bursts_r ;
+reg [24:0] wei_n_bursts_r      ;
+reg [31:0] wei_cnt_incr_r      ;
+reg [31:0] wei_cnt_r           ;
+
+reg [31:0] ftm_addr_r  	  	   ;
+reg [24:0] ftm_n_rema_bursts_r ;
+reg [24:0] ftm_n_bursts_r      ;
+reg [31:0] ftm_cnt_incr_r      ;
+reg [31:0] ftm_cnt_r           ;
+
+reg [31:0] wei_shape           ;
+reg [31:0] ftm_shape           ;
+reg [31:0] out_addr            ;
+
+
+
+
+
+
+assign wei_addr 		 = fifo_din_i[31:0];
+assign wei_n_last_burst  = fifo_din_i[38:32]; // number of valid bytes in last burst.
+assign wei_n_rema_bursts = fifo_din_i[63:39]; // each burst is 128 bytes (16 * 64-bits).
+
+assign ftm_addr 	  	 = fifo_din_i[95:64];
+assign ftm_n_last_burst  = fifo_din_i[102:96];
+assign ftm_n_rema_bursts = fifo_din_i[127:103];
+
+assign wei_shape         = fifo_din_i[159:128];
+assign ftm_shape         = fifo_din_i[191:160];
+assign out_addr          = fifo_din_i[223:192];
 
 
 
@@ -302,103 +345,165 @@ begin
 		
 		state	   <= INIT_ST;
 
-		cu_sel_r   <= 0;
-		cu_sel_wei <= 0;
-		cu_sel_ker <= 0;	
+		wei_cu_sel <= 0;
+		ftm_cu_sel <= 0;	
+
+
+		wei_cnt_r       <= 0;
+		wei_cnt_incr_r <= 0;
     end 
     else begin    
 
+		// load wei until sufficient -> load fm until done -> load wei until done -> pre-load next layer.
 		case(state)
 
 			INIT_ST:
                 if (fifo_wr_en_i == 0)
-                    state <= INIT_WEI_ST;
+                    state <= WEI_INIT_ST;
 			
-			LATCH_ST:
-				state <= LOAD_WEI_ST;
+			WEI_INIT_ST:
+				state <= WEI_LOAD_ST;
 
+			WEI_INCR_ST:
+				if(~wb_full)
+					state <= WEI_LOAD_ST;
 
-			// load wei until sufficient -> load fm until done -> load wei until done -> pre-load next layer.
-			LOAD_WEI_ST:
-				if (wb_sufficient_i && ~fb_done_i)  // done loading all wei, but not all fm.
-					state <= LOAD_FM_ST;
-				else if(wb_done_i)
-					state <= INIT_ST;
-					
-			LOAD_FM_ST:
-				if (fb_done_i)
-					state <= LOAD_WEI_ST;
+			WEI_LOAD_ST:
+				if (RDONE_REG) begin // When mst_read in END state.
+					if (wb_sufficient_i && ~fb_done_i && ~wei_pending_i) 
+						state <= FM_INIT_ST;
+					else if (wb_done_i && ~wei_pending_i)
+						state <= INIT_ST;
+					else
+						state <= WEI_INCR_ST;
+				end
+
+			FM_INIT_ST:
+				state <= FM_LOAD_ST;
+
+			FM_INCR_ST:
+				if(~fb_full)
+					state <= FM_LOAD_ST;
+
+			FM_LOAD_ST:	
+				if (RDONE_REG) begin // When mst_read in END state.
+					if (fb_done_i && ~ftm_pending_i)
+						state <= WEI_INCR_ST;
+					else
+						state <= FM_INCR_ST;
+				end
 		endcase	
 
 
+		if (wei_init_st == 1'b1) begin
 
-		if (latch_state == 1'b1) begin
-			wei_addr_r          <= wei_addr;
-			wei_n_rema_bursts_r <= wei_n_rema_bursts;
-			wei_n_bursts_r		<= wei_n_bursts_next;
+			wei_addr_r <= wei_addr;
+
+			if (UNIT_BURSTS >= wei_n_rema_bursts) begin // will include the last burst.
+				wei_n_rema_bursts_r <= 0;
+				wei_n_bursts_r		<= wei_n_rema_bursts;
+
+				wei_cnt_incr_r	<= ((wei_n_rema_bursts - 1) << ($clog2(BYTES_PER_BURST))) + wei_n_last_burst;
+			end
+			else begin
+				wei_n_rema_bursts_r <= wei_n_rema_bursts - UNIT_BURSTS;
+				wei_n_bursts_r		<= UNIT_BURSTS;
+
+				wei_cnt_incr_r	<= (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
+			end
+		end
+		else if (wei_incr_st == 1'b1) begin
+
+			wei_addr_r <= wei_addr_r + (wei_n_bursts_r << ($clog2(BYTES_PER_BURST)));
+
+			if (UNIT_BURSTS >= wei_n_rema_bursts_r) begin // will include the last burst.
+				
+				wei_n_rema_bursts_r <= 0;
+				wei_n_bursts_r		<= wei_n_rema_bursts_r;
+
+				wei_cnt_incr_r	    <= wei_cnt_incr_r + ((wei_n_rema_bursts_r - 1) << ($clog2(BYTES_PER_BURST))) + wei_n_last_burst;
+			end
+			else begin
+
+				wei_n_rema_bursts_r <= wei_n_rema_bursts_r - UNIT_BURSTS;
+				wei_n_bursts_r		<= UNIT_BURSTS;
+
+				wei_cnt_incr_r	    <= wei_cnt_incr_r + (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
+			end	
+		end
+
+
+		if (wei_init_st == 1'b1) begin
+			wei_cu_sel <= 0;	
+			wei_cnt_r <= 0;	
+		end
+		else if (mem_we == 1'b1) begin		
 			
-			cu_sel_wei <= 0;
-		end
-		else if (load_wei_state == 1'b1) begin
-			wei_addr_r          <= wei_addr_r + wei_n_bursts_r;
-			wei_n_rema_bursts_r <= wei_n_rema_bursts_r - wei_n_bursts_r;
-			wei_n_bursts_r      <= wei_n_bursts_next;
+			wei_cnt_r <= wei_cnt_r + BYTES_PER_AXI_TRANSFER;
 
-			cu_sel_wei <= cu_sel_wei_next;
-		end
+			if (wei_cu_sel == N_CONV_UNIT-1)
+				wei_cu_sel <= 0;
+			else
+				wei_cu_sel <= wei_cu_sel + 1;
+		end		
 
     end
 end    
 
 
-assign wei_n_bursts_next = (UNIT_BURSTS > wei_n_rema_bursts) ? wei_n_rema_bursts : UNIT_BURSTS;
-assign cu_sel_wei_next = (mem_we == 1'b1) ? cu_sel_wei + 1 : cu_sel_wei;
+// assign wei_n_bursts_next = (UNIT_BURSTS > wei_n_rema_bursts) ? wei_n_rema_bursts : UNIT_BURSTS;
 
-
-
-assign wei_addr 		 = fifo_din_i[31:0];
-assign wei_n_last_burst  = fifo_din_i[38:32];
-assign wei_n_rema_bursts = fifo_din_i[51:39];
-// assign wei_n        	= fifo_din_i[63:52];
-
-assign fm_addr 	  	 	= fifo_din_i[95:64];
-assign fm_n_last_burst  = fifo_din_i[102:96];
-assign fm_n_bursts 		= fifo_din_i[127:103];
-
-assign wei_shape        = fifo_din_i[159:128];
-assign fm_shape         = fifo_din_i[191:160];
-assign out_addr         = fifo_din_i[223:192];
-
-assign RSTART_REG  = load_wei_state | load_fm_state;	 
-assign RADDR_REG   = (load_wei_state) ? wei_addr_r :
-					 (load_fm_state)  ? fm_addr_r : 0;
-assign RNBURST_REG = (load_wei_state) ? wei_n_bursts_r :
-				     (load_fm_state)  ? fm_n_bursts : 0; 
-
+assign RSTART_REG  = wei_load_st ;	 
+assign RADDR_REG   = (wei_load_st) ? wei_addr_r :
+					 (ftm_load_st) ? ftm_addr_r : 0;
+assign RNBURST_REG = (wei_load_st) ? wei_n_bursts_r :
+				     (ftm_load_st) ? ftm_n_bursts_r : 0; 
 
 
 // FSM outputs.
 always @(state) begin
 
-    init_state	        = 0;
-	load_wei_state   = 0;
+    init_st	      = 0;
+	wei_load_st   = 0;
+	wei_init_st   = 0;
+	wei_incr_st   = 0;
+	ftm_load_st   = 0;	
+	ftm_init_st   = 0;
+	ftm_incr_st   = 0;
 
 	case (state)
 
 		INIT_ST:
-			init_state       	= 1;
+			init_st       = 1;
 
-		LOAD_WEIGHT_ST
-			load_wei_state   = 1;
+		WEI_LOAD_ST
+			wei_load_st   = 1;
+
+		WEI_INIT_ST:
+			wei_init_st   = 1;
+
+		WEI_INCR_ST:
+			wei_incr_st   = 1;
+
+		FM_LOAD_ST:
+			ftm_load_st   = 1;	
+
+		FM_INIT_ST:
+			ftm_init_st   = 1;
+
+		FM_INCR_ST:
+			ftm_incr_st   = 1;
 	endcase
 end
 
-assign fifo_ready_i = init_state;
-
-assign cu_sel_i = (load_mode == 0) ? cu_sel_wei : cu_sel_ker;
 
 
 
+
+assign fifo_ready_i = init_st;
+
+assign cu_sel_i = wei_pending_i ? wei_cu_sel : 
+				  ftm_pending_i ? ftm_cu_sel : 0;
 
 
 
@@ -419,12 +524,9 @@ ddr_buffer_reader
 
 		// Output data.
         .mem_we         (mem_we         ),
-        .mem_di         (di             )
+        .mem_di         (mem_di             )
     );
 
-
-// wb_empty, kb_empty
-// wb_clr, kb_clr
 
 
 generate
@@ -447,17 +549,21 @@ genvar i;
 				.clk		    (aclk			),
 				.rstn         	(aresetn		),
 
-				input wire [B_LAYERPARA-1:0]   layer_para    ,
-				input wire                     layer_para_we ,
+				.layer_para     (),
+				.layer_para_we  (),
+
+				.wb_sufficient  (wb_sufficient_i),
+				.wb_done        (wb_done_i      ),
+				.fb_sufficient  (fb_sufficient_i),
+				.fb_done        (fb_done_i      ),
 
 				.wb_we          (wb_we[i]       ),
 				.wb_clr         (wb_clr[i]      ),
 				.wb_empty       (wb_empty[i]    ),
-				.kb_we          (kb_we[i]       ),
-				.kb_clr         (kb_clr[i]      ),
-				.kb_empty       (kb_empty[i]    ),
+				.fb_we          (fb_we[i]       ),
+				.fb_clr         (fb_clr[i]      ),
+				.fb_empty       (fb_empty[i]    ),
 				.di             (di             ),
-
 
 				.partial_sum_i  (partial_sum_i[i]),
 				.partial_sum_o  (partial_sum_o[i]),
@@ -466,13 +572,14 @@ genvar i;
 			);
 		
 		assign en[i]    = (cu_sel_i == i) ? 1 : 0;
-		assign wb_we[i] = en[i] & ((load_mode == 0) ? mem_we : 0);
-		assign kb_we[i] = en[i] & ((load_mode == 1) ? mem_we : 0);
+		assign wb_we[i] = en[i] & (wei_pending_i ? mem_we : 0);
+		assign fb_we[i] = en[i] & (ftm_pending_i ? mem_we : 0);
 		
 	end
 endgenerate 
 
-
+assign wei_pending_i = (wei_cnt_r == wei_cnt_incr_r) ? 0 : 1;
+assign ftm_pending_i = (ftm_cnt_r == ftm_cnt_incr_r) ? 0 : 1;
 
 
 activation_unit #(
@@ -487,36 +594,6 @@ activation_unit #(
 		.di             (partial_sum_o[N_CONV_UNIT-1]),
 		.do				()
 	);
-
-
-
-// data_writer
-//     #(
-//         .DATA_WIDTH  (DATA_WIDTH),
-// 		.N_CONV_UNIT (N_CONV_UNIT)
-//     )
-//     data_writer_i
-// 	( 
-//         .clk    		(aclk			),
-// 		.rstn			(aresetn			),
-
-// 		// AXIS Slave.
-// 		.s_axis_tdata	(m_axis_tdata  ),
-// 		.s_axis_tvalid	(m_axis_tvalid ),
-// 		.s_axis_tready	(m_axis_tready ),
-
-// 		// Output data.
-//         // .mem_we         (mem_we         ),
-
-// 		.wb_we          (wb_we      ),
-// 		.wb_clr         (wb_clr     ),
-// 		.wb_empty       (wb_empty   ),
-// 		.kb_we          (kb_we      ),
-// 		.kb_clr         (kb_clr     ),
-// 		.kb_empty       (kb_empty   ),
-//         .mem_di         (di         )
-//     );
-
 
 
 
@@ -653,7 +730,7 @@ axi_mst
 		.RSTART_REG		(RSTART_REG		),
 		.RADDR_REG		(RADDR_REG		),
 		.RNBURST_REG	(RNBURST_REG	),
-		.RIDLE_REG      (RIDLE_REG      ),
+		.RIDLE_REG      (RDONE_REG      ),
 
 		.WSTART_REG		(WSTART_REG		),
 		.WADDR_REG		(WADDR_REG		),

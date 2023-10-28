@@ -89,7 +89,8 @@ module axi_mst
 		input	wire						RSTART_REG		,
 		input	wire	[31:0]				RADDR_REG		,
 		input	wire	[31:0]				RNBURST_REG		,
-		output	wire                        RIDLE_REG  	,
+		output	wire                        RDONE_REG     	,
+		
 
 		input	wire						WSTART_REG		,
 		input	wire	[31:0]				WADDR_REG		,
@@ -154,7 +155,7 @@ axi_mst_read
 		.START_REG		(RSTART_REG		),
 		.ADDR_REG		(RADDR_REG		),
 		.NBURST_REG		(RNBURST_REG	),
-		.IDLE_REG       (RIDLE_REG      ),
+		.DONE_REG       (RDONE_REG      ),
 
 		.probe (probe)
     );
