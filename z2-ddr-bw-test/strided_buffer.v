@@ -4,7 +4,7 @@ module strided_buffer
         // parameter N_DSP = 3,
         
         parameter B_BUF_ADDR = 9,
-        parameter B_SHAPE = 48,
+        parameter B_SHAPE = 32,
         parameter B_COORD = 8,
         parameter DATA_WIDTH = 64,
         
@@ -24,6 +24,7 @@ module strided_buffer
         input wire [B_BUF_ADDR*N_BUF_X-1:0] rdaddr;
         output wire [DATA_WIDTH*N_BUF_X-1:0] do   ,
 
+        output wire sufficient
         // output wire [3*B_COORD-1:0] cur_coord,
         // output wire done_ld 
     );
@@ -32,7 +33,7 @@ module strided_buffer
 
 reg  we_r;
 reg  clr_r;
-
+reg sufficient_r;
 
 reg  [DATA_WIDTH-1:0] di_r;
 
@@ -75,6 +76,8 @@ begin
         c_wr_r      <= 0;
 
         sel_wr      <= 0;
+
+        sufficient_r <= 0;
                 
         for (i=0; i<N_BUF_X; i=i+1) wraddr[i] <= 0;
 
@@ -93,11 +96,15 @@ begin
             clr_r       <= 0;
             di_r        <= 0;
 
-            y_wr_r <= 0;
-            x_wr_r <= 0;
-            c_wr_r <= 0;
+            y_wr_r      <= 0;
+            x_wr_r      <= 0;
+            c_wr_r      <= 0;
 
             sel_wr      <= 0;
+
+            sufficient_r <= 0;
+                    
+            for (i=0; i<N_BUF_X; i=i+1) wraddr[i] <= 0;
         end
         else if (we_r) begin
             // c
@@ -107,7 +114,13 @@ begin
                 if(y_wr_next == h_i) begin
                     y_wr_r <= 0;
                     // x
-                    x_wr_r <= x_wr_next;
+                    if(y_wr_next == h_i) begin
+                        x_wr_r <= 0;
+                        sufficient_r <= 1'b1;
+                    end              
+                    else
+                        x_wr_r <= x_wr_next;
+                                            
                     if(sel_wr == N_BUF_X - 1)
                         sel_wr <= 0;
                     else
@@ -124,12 +137,15 @@ begin
     end
 end    
 
+assign x_wr_next = x_wr_r + 1;
+assign y_wr_next = y_wr_r + 1;
+assign c_wr_next = c_wr_r + 1;
 
-assign c_i = shape[0*16+:16];
-assign h_i = shape[1*16+:16];
-assign w_i = shape[2*16+:16];
+assign c_i = shape[31:20];
+assign h_i = shape[19:10];
+assign w_i = shape[9:0]  ;
 
-assign n_wrap_c = (c_i >> 6);
+assign n_wrap_c = (c_i >> ($clog2(N_CONV_UNIT >> 2))); 
 
 
 // strided write.
@@ -160,5 +176,7 @@ endgenerate
 assign cur_coord = {c_wr_r, y_wr_r, x_wr_r};
 
 assign done_ld = (x_wr_r == w_i);
+
+assign sufficient = sufficient_r;
 
 endmodule

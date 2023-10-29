@@ -13,8 +13,8 @@ module qt3_tpu_v1
 		parameter B_PIXEL = 16, 
 		parameter B_INST = 32 ,
 
-		parameter N_KERNEL = 3,
-		parameter N_CONV_UNIT = 64,
+		parameter N_KERNEL = 4,
+		parameter N_CONV_UNIT = 8,
 		parameter FW    = 253,
 		parameter UNIT_BURSTS = 2048 // need to be power of 2.
 
@@ -226,13 +226,13 @@ wire [B_INST-1:0]  inst_i        [0:N_CONV_UNIT-1];
 wire [B_INST-1:0]  inst_o        [0:N_CONV_UNIT-1];
 
 
-wire   [N_CONV_UNIT-1:0]  wb_we     				;
-wire   [N_CONV_UNIT-1:0]  wb_clr    				;
-wire   [N_CONV_UNIT-1:0]  wb_empty  				;
-wire   [N_KERNEL-1:0]     fb_we    [0:N_CONV_UNIT-1];
-wire   [N_KERNEL-1:0]     fb_clr   [0:N_CONV_UNIT-1];
-wire   [N_CONV_UNIT-1:0]  fb_empty 					;
-wire [DATA_WIDTH-1:0]     mem_di        			    ;
+wire   [N_CONV_UNIT-1:0]  wb_we    ;
+wire   [N_CONV_UNIT-1:0]  wb_clr   ;
+wire   [N_CONV_UNIT-1:0]  wb_empty ;
+wire   [N_CONV_UNIT-1:0]  fb_we    ;
+wire   [N_CONV_UNIT-1:0]  fb_clr   ;
+wire   [N_CONV_UNIT-1:0]  fb_empty ;
+wire [DATA_WIDTH-1:0]     mem_di   ;
 
 
 
@@ -250,9 +250,9 @@ localparam INIT_ST     = 0;
 localparam WEI_LOAD_ST = 1;   
 localparam WEI_INIT_ST = 2;    
 localparam WEI_INCR_ST = 3;    
-localparam FM_LOAD_ST  = 4;  
-localparam FM_INIT_ST  = 5;
-localparam FM_INCR_ST  = 6;
+localparam FTM_LOAD_ST  = 4;  
+localparam FTM_INIT_ST  = 5;
+localparam FTM_INCR_ST  = 6;
 
 reg init_st	   ;
 reg wei_load_st;
@@ -263,6 +263,23 @@ reg ftm_init_st;
 reg ftm_incr_st;
 
 reg [3:0] state;
+
+
+
+
+wire [31:0] wei_addr 		    ;
+wire [6:0]  wei_n_last_burst    ;
+wire [24:0] wei_n_rema_bursts   ;
+
+wire [31:0] ftm_addr 	  	    ;
+wire [6:0]  ftm_n_last_burst    ;
+wire [24:0] ftm_n_rema_bursts   ;
+
+
+wire [63:0] conv_para           ;
+wire 		conv_para_we		;
+
+wire [31:0] out_addr            ;
 
 
 
@@ -289,18 +306,17 @@ ctrl #(
 
 
 
+assign wei_addr 		 = fifo_din_i[31:0];
+assign wei_n_last_burst  = fifo_din_i[38:32]; // number of valid bytes in last burst.
+assign wei_n_rema_bursts = fifo_din_i[63:39]; // each burst is 128 bytes (16 * 64-bits).
 
-wire [31:0] wei_addr 		    ;
-wire [6:0]  wei_n_last_burst    ;
-wire [24:0] wei_n_rema_bursts   ;
+assign ftm_addr 	  	 = fifo_din_i[95:64];
+assign ftm_n_last_burst  = fifo_din_i[102:96];
+assign ftm_n_rema_bursts = fifo_din_i[127:103];
 
-wire [31:0] ftm_addr 	  	    ;
-wire [6:0]  ftm_n_last_burst    ;
-wire [24:0] ftm_n_rema_bursts   ;
+assign conv_para         = fifo_din_i[191:128];
+assign out_addr          = fifo_din_i[223:192];
 
-wire [31:0] wei_shape           ;
-wire [31:0] ftm_shape           ;
-wire [31:0] out_addr            ;
 
 
 
@@ -316,26 +332,18 @@ reg [24:0] ftm_n_bursts_r      ;
 reg [31:0] ftm_cnt_incr_r      ;
 reg [31:0] ftm_cnt_r           ;
 
-reg [31:0] wei_shape           ;
-reg [31:0] ftm_shape           ;
-reg [31:0] out_addr            ;
+
+wire wb_sufficient_i ;
+wire wb_full_i       ;           
+wire wb_done_i       ;    
 
 
+wire fb_sufficient_i ; 
+wire fb_full_i       ;         
+wire fb_done_i       ;    
+  
 
 
-
-
-assign wei_addr 		 = fifo_din_i[31:0];
-assign wei_n_last_burst  = fifo_din_i[38:32]; // number of valid bytes in last burst.
-assign wei_n_rema_bursts = fifo_din_i[63:39]; // each burst is 128 bytes (16 * 64-bits).
-
-assign ftm_addr 	  	 = fifo_din_i[95:64];
-assign ftm_n_last_burst  = fifo_din_i[102:96];
-assign ftm_n_rema_bursts = fifo_din_i[127:103];
-
-assign wei_shape         = fifo_din_i[159:128];
-assign ftm_shape         = fifo_din_i[191:160];
-assign out_addr          = fifo_din_i[223:192];
 
 
 
@@ -348,11 +356,21 @@ begin
 		wei_cu_sel <= 0;
 		ftm_cu_sel <= 0;	
 
+		wei_addr_r 		    <= 0;
+		wei_n_rema_bursts_r <= 0;  
+		wei_n_bursts_r      <= 0;  
+		wei_cnt_incr_r      <= 0;  
+		wei_cnt_r           <= 0;  
 
-		wei_cnt_r       <= 0;
-		wei_cnt_incr_r <= 0;
+		ftm_addr_r  	  	<= 0;  
+		ftm_n_rema_bursts_r <= 0;  
+		ftm_n_bursts_r      <= 0;  
+		ftm_cnt_incr_r      <= 0;  
+		ftm_cnt_r           <= 0; 
+
     end 
     else begin    
+
 
 		// load wei until sufficient -> load fm until done -> load wei until done -> pre-load next layer.
 		case(state)
@@ -365,32 +383,35 @@ begin
 				state <= WEI_LOAD_ST;
 
 			WEI_INCR_ST:
-				if(~wb_full)
+				if(~wb_full_i)
 					state <= WEI_LOAD_ST;
 
 			WEI_LOAD_ST:
 				if (RDONE_REG) begin // When mst_read in END state.
-					if (wb_sufficient_i && ~fb_done_i && ~wei_pending_i) 
-						state <= FM_INIT_ST;
-					else if (wb_done_i && ~wei_pending_i)
-						state <= INIT_ST;
+					if (wb_sufficient_i && ~fb_done_i) 
+						if (~wei_pending_i)
+							state <= FTM_INIT_ST;
+					else if (wb_done_i)
+						if (~wei_pending_i)
+							state <= INIT_ST;
 					else
 						state <= WEI_INCR_ST;
 				end
 
-			FM_INIT_ST:
-				state <= FM_LOAD_ST;
+			FTM_INIT_ST:
+				state <= FTM_LOAD_ST;
 
-			FM_INCR_ST:
-				if(~fb_full)
-					state <= FM_LOAD_ST;
+			FTM_INCR_ST:
+				if(~fb_full_i)
+					state <= FTM_LOAD_ST;
 
-			FM_LOAD_ST:	
+			FTM_LOAD_ST:	
 				if (RDONE_REG) begin // When mst_read in END state.
 					if (fb_done_i && ~ftm_pending_i)
-						state <= WEI_INCR_ST;
+						if (~ftm_pending_i)
+							state <= WEI_INCR_ST;
 					else
-						state <= FM_INCR_ST;
+						state <= FTM_INCR_ST;
 				end
 		endcase	
 
@@ -400,16 +421,16 @@ begin
 			wei_addr_r <= wei_addr;
 
 			if (UNIT_BURSTS >= wei_n_rema_bursts) begin // will include the last burst.
+
 				wei_n_rema_bursts_r <= 0;
 				wei_n_bursts_r		<= wei_n_rema_bursts;
-
-				wei_cnt_incr_r	<= ((wei_n_rema_bursts - 1) << ($clog2(BYTES_PER_BURST))) + wei_n_last_burst;
+				wei_cnt_incr_r	    <= ((wei_n_rema_bursts - 1) << ($clog2(BYTES_PER_BURST))) + wei_n_last_burst;
 			end
 			else begin
+
 				wei_n_rema_bursts_r <= wei_n_rema_bursts - UNIT_BURSTS;
 				wei_n_bursts_r		<= UNIT_BURSTS;
-
-				wei_cnt_incr_r	<= (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
+				wei_cnt_incr_r	    <= (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
 			end
 		end
 		else if (wei_incr_st == 1'b1) begin
@@ -420,14 +441,13 @@ begin
 				
 				wei_n_rema_bursts_r <= 0;
 				wei_n_bursts_r		<= wei_n_rema_bursts_r;
-
-				wei_cnt_incr_r	    <= wei_cnt_incr_r + ((wei_n_rema_bursts_r - 1) << ($clog2(BYTES_PER_BURST))) + wei_n_last_burst;
+				wei_cnt_incr_r	    <= wei_cnt_incr_r + 
+					((wei_n_rema_bursts_r - 1) << ($clog2(BYTES_PER_BURST))) + wei_n_last_burst;
 			end
 			else begin
 
 				wei_n_rema_bursts_r <= wei_n_rema_bursts_r - UNIT_BURSTS;
 				wei_n_bursts_r		<= UNIT_BURSTS;
-
 				wei_cnt_incr_r	    <= wei_cnt_incr_r + (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
 			end	
 		end
@@ -447,17 +467,79 @@ begin
 				wei_cu_sel <= wei_cu_sel + 1;
 		end		
 
+
+
+
+
+
+
+
+		// following codes are the same as above, just replace `wei_` by `ftm_`
+
+		if (ftm_init_st == 1'b1) begin
+
+			ftm_addr_r <= ftm_addr;
+
+			if (UNIT_BURSTS >= ftm_n_rema_bursts) begin // will include the last burst.
+
+				ftm_n_rema_bursts_r <= 0;
+				ftm_n_bursts_r		<= ftm_n_rema_bursts;
+				ftm_cnt_incr_r	    <= ((ftm_n_rema_bursts - 1) << ($clog2(BYTES_PER_BURST))) + ftm_n_last_burst;
+			end
+			else begin
+
+				ftm_n_rema_bursts_r <= ftm_n_rema_bursts - UNIT_BURSTS;
+				ftm_n_bursts_r		<= UNIT_BURSTS;
+				ftm_cnt_incr_r	    <= (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
+			end
+		end
+		else if (ftm_incr_st == 1'b1) begin
+
+			ftm_addr_r <= ftm_addr_r + (ftm_n_bursts_r << ($clog2(BYTES_PER_BURST)));
+
+			if (UNIT_BURSTS >= ftm_n_rema_bursts_r) begin // will include the last burst.
+				
+				ftm_n_rema_bursts_r <= 0;
+				ftm_n_bursts_r		<= ftm_n_rema_bursts_r;
+				ftm_cnt_incr_r	    <= ftm_cnt_incr_r + 
+					((ftm_n_rema_bursts_r - 1) << ($clog2(BYTES_PER_BURST))) + ftm_n_last_burst;
+			end
+			else begin
+
+				ftm_n_rema_bursts_r <= ftm_n_rema_bursts_r - UNIT_BURSTS;
+				ftm_n_bursts_r		<= UNIT_BURSTS;
+				ftm_cnt_incr_r	    <= ftm_cnt_incr_r + (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
+			end	
+		end
+
+
+		if (ftm_init_st == 1'b1) begin
+			ftm_cu_sel <= 0;	
+			ftm_cnt_r <= 0;	
+		end
+		else if (mem_we == 1'b1) begin		
+			
+			ftm_cnt_r <= ftm_cnt_r + BYTES_PER_AXI_TRANSFER;
+
+			if (ftm_cu_sel == N_CONV_UNIT-1)
+				ftm_cu_sel <= 0;
+			else
+				ftm_cu_sel <= ftm_cu_sel + 1;
+		end		
+
     end
 end    
 
 
-// assign wei_n_bursts_next = (UNIT_BURSTS > wei_n_rema_bursts) ? wei_n_rema_bursts : UNIT_BURSTS;
-
-assign RSTART_REG  = wei_load_st ;	 
+assign RSTART_REG  = wei_load_st | ftm_load_st;	 
 assign RADDR_REG   = (wei_load_st) ? wei_addr_r :
 					 (ftm_load_st) ? ftm_addr_r : 0;
 assign RNBURST_REG = (wei_load_st) ? wei_n_bursts_r :
 				     (ftm_load_st) ? ftm_n_bursts_r : 0; 
+
+
+assign wb_done_i = (wei_n_rema_bursts_r == 0) ? 1'b1 : 1'b0;
+assign fb_done_i = (ftm_n_rema_bursts_r == 0) ? 1'b1 : 1'b0;
 
 
 // FSM outputs.
@@ -485,13 +567,13 @@ always @(state) begin
 		WEI_INCR_ST:
 			wei_incr_st   = 1;
 
-		FM_LOAD_ST:
+		FTM_LOAD_ST:
 			ftm_load_st   = 1;	
 
-		FM_INIT_ST:
+		FTM_INIT_ST:
 			ftm_init_st   = 1;
 
-		FM_INCR_ST:
+		FTM_INCR_ST:
 			ftm_incr_st   = 1;
 	endcase
 end
@@ -507,12 +589,12 @@ assign cu_sel_i = wei_pending_i ? wei_cu_sel :
 
 
 
-ddr_buffer_reader
+data_writer
     #(
         .DATA_WIDTH  (DATA_WIDTH),
 		.N_CONV_UNIT (N_CONV_UNIT)
     )
-    ddr_buffer_reader_i
+    data_writer_i
 	( 
         .clk    		(aclk			),
 		.rstn			(aresetn		),
@@ -529,6 +611,13 @@ ddr_buffer_reader
 
 
 
+
+// out_addr 
+
+
+
+
+
 generate
 genvar i;
 	for (i=0; i < N_CONV_UNIT; i=i+1) begin : GEN_CONV_UNIT
@@ -537,9 +626,9 @@ genvar i;
         assign partial_sum_i[i] = (i==0) ? 0 : partial_sum_o_arr[i-1];
         assign inst_i[i] = (i==0) ? conv_inst : inst_o[i-1];
 
-		// Each with 4 groups of 3-DSP, 5 36kb-BRAM as weight buffer,  3 36kb-BRAM as kernel buffer.
-		// Each perform 12 muls per cycle.
-		// We need 16 such unit along channel dir.
+		// Each with 4 groups of 4-DSP, 10 36kb-BRAM as weight buffer,  4 36kb-BRAM as kernel buffer.
+		// Each perform 16 muls per cycle.
+		// We need 8 such unit along channel dir.
 		conv_unit #(
 				.DATA_WIDTH(DATA_WIDTH),
 				.N_KERNEL  (N_KERNEL)
@@ -549,13 +638,13 @@ genvar i;
 				.clk		    (aclk			),
 				.rstn         	(aresetn		),
 
-				.layer_para     (),
-				.layer_para_we  (),
+				.para           (conv_para      ),
+				.para_we        (conv_para_we   ),
 
 				.wb_sufficient  (wb_sufficient_i),
-				.wb_done        (wb_done_i      ),
+				.wb_full        (wb_full_i      ),
 				.fb_sufficient  (fb_sufficient_i),
-				.fb_done        (fb_done_i      ),
+				.fb_full        (fb_full_i      ),
 
 				.wb_we          (wb_we[i]       ),
 				.wb_clr         (wb_clr[i]      ),
@@ -578,8 +667,12 @@ genvar i;
 	end
 endgenerate 
 
+assign conv_para_we = fifo_wr_en_i & init_st;
+
 assign wei_pending_i = (wei_cnt_r == wei_cnt_incr_r) ? 0 : 1;
 assign ftm_pending_i = (ftm_cnt_r == ftm_cnt_incr_r) ? 0 : 1;
+
+
 
 
 activation_unit #(

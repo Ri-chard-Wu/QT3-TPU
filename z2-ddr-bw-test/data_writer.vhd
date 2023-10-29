@@ -33,7 +33,7 @@ type fsm_state is ( WAIT_TVALID_ST		,
                     RW_TDATA_ST			);
 signal state : fsm_state;
 
-signal rw_tdata_state           : std_logic;
+
 
 -- Axis registers.
 signal tready_i     	: std_logic;
@@ -116,7 +116,6 @@ end process;
 process (state)
 begin
 
-rw_tdata_state          <= '0';
 tready_i                <= '0';
 
     case state is
@@ -125,7 +124,6 @@ tready_i                <= '0';
             tready_i                <= '1';
             
         when RW_TDATA_ST =>
-            rw_tdata_state          <= '1'; -- 1
             tready_i                <= '1'; -- 1
         
     end case;
