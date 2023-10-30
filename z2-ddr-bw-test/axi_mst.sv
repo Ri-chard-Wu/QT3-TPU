@@ -5,6 +5,7 @@ module axi_mst
 		// Parameters of AXI Master I/F.
 		parameter ID_WIDTH					= 6				,
 		parameter DATA_WIDTH				= 64			,
+		parameter ADDR_WIDTH				= 32			,
 		parameter BURST_LENGTH				= 7,
 		parameter  B_BURST_LENGTH            = 4   
 	)
@@ -78,11 +79,11 @@ module axi_mst
 		/************************/
 		/* AXIS Slave Interfase */
 		/************************/
-		output	wire						s_axis_tready	,
-		input	wire	[DATA_WIDTH-1:0]	s_axis_tdata	,
-		input	wire	[DATA_WIDTH/8-1:0]	s_axis_tstrb	,
-		input	wire						s_axis_tlast	,
-		input	wire						s_axis_tvalid	,
+		output	wire								s_axis_tready	,
+		input	wire	[DATA_WIDTH+ADDR_WIDTH-1:0]	s_axis_tdata	,
+		input	wire	[DATA_WIDTH/8-1:0]			s_axis_tstrb	,
+		input	wire								s_axis_tlast	,
+		input	wire								s_axis_tvalid	,
 
 		// Registers.
 

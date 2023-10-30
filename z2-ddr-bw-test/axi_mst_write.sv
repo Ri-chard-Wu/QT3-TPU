@@ -4,6 +4,7 @@ module axi_mst_write
 
 		parameter ID_WIDTH					= 6				,
 		parameter DATA_WIDTH				= 64			,
+		parameter ADDR_WIDTH				= 32			,
 		parameter BURST_LENGTH				= 7,
 		parameter  B_BURST_LENGTH            = 4   
     )
@@ -37,11 +38,11 @@ module axi_mst_write
 		output	wire						m_axi_bready	,
 
 		// AXIS Slave Interfase.
-		output	wire						s_axis_tready	,
-		input	wire	[DATA_WIDTH-1:0]	s_axis_tdata	,
-		input	wire	[DATA_WIDTH/8-1:0]	s_axis_tstrb	,
-		input	wire						s_axis_tlast	,
-		input	wire						s_axis_tvalid	,
+		output	wire							    s_axis_tready	,
+		input	wire	[DATA_WIDTH+ADDR_WIDTH-1:0]	s_axis_tdata	,
+		input	wire	[DATA_WIDTH/8-1:0]		    s_axis_tstrb	,
+		input	wire							    s_axis_tlast	,
+		input	wire							    s_axis_tvalid	,
 
 		// Registers.
 		input	wire						START_REG		,
@@ -64,7 +65,7 @@ localparam BYTES_PER_BURST			= (BURST_LENGTH + 1) * BYTES_PER_AXI_TRANSFER;
 // States.
 typedef enum 	{	INIT_ST			,
 					TRIGGER_ST		,
-					READ_REGS_ST	,
+					READ_FIFO_ST	,
 					INIT_ADDR_ST	,
                 	INCR_ADDR_ST	,
                 	ADDR_ST			,
@@ -79,35 +80,28 @@ typedef enum 	{	INIT_ST			,
 
 // FSM Signals.
 reg 						init_state          ;
-reg 						read_regs_state		;
+reg 						read_fifo_state
 reg 						init_addr_state		;
-reg 						incr_addr_state		;
 reg							addr_state			;
 reg							data_state			;
 reg							resp_state			;
 
 
 
-// Registers.
-reg		[31:0]				addr_reg_r			;
-reg		[31:0]				nburst_reg_r		;
 
 // Fifo signals.
-wire					    fifo_rd_en			;
-wire	[DATA_WIDTH-1:0]	fifo_dout			;
-reg		[DATA_WIDTH-1:0]	fifo_dout_r			;
-wire						fifo_full	        ;
-wire						fifo_empty    		;
-reg							fifo_empty_r		;
+wire					  		    fifo_rd_en			;
+wire	[DATA_WIDTH+ADDR_WIDTH-1:0]	fifo_dout			;
+reg		[DATA_WIDTH+ADDR_WIDTH-1:0]	fifo_dout_r			;
+wire								fifo_full	        ;
+wire								fifo_empty    		;
+reg									fifo_empty_r		;
 
-// Address generation.
-wire	[31:0]				addr_base			;
-wire	[31:0]				addr_acc			;
-reg		[31:0]				addr_r				;
 
-// Burst counter.
-reg		[7:0]				cnt_burst			;
-reg		[31:0]				cnt_nburst			;
+reg		[ADDR_WIDTH-1:0]				addr_r	;
+reg		[DATA_WIDTH-1:0]				data_r	;
+
+
 
 /****************/
 /* Architecture */
@@ -125,26 +119,57 @@ fifo_axi
 		// Fifo depth.
 		.N(32			)
     )
-	fifo_in_i
+	data_fifo_i
     ( 
 		.rstn	(rstn			),
 		.clk 	(clk			),
 		
 		// Write I/F.
 		.wr_en	(s_axis_tvalid	),
-		.din	(s_axis_tdata	),
+		.din	(s_axis_tdata[DATA_WIDTH-1:0]	),
 		
 		// Read I/F.
 		.rd_en	(fifo_rd_en		),
-		.dout	(fifo_dout		),
+		.dout	(fifo_dout[DATA_WIDTH-1:0]		),
 		
 		// Flags.
 		.full	(fifo_full		),
 		.empty	(fifo_empty		)
     );
 
+
+
+// Single-clock fifo.
+fifo_axi
+    #(
+		// Data width.
+		.B(ADDR_WIDTH	),
+		
+		// Fifo depth.
+		.N(32			)
+    )
+	addr_fifo_i
+    ( 
+		.rstn	(rstn			),
+		.clk 	(clk			),
+		
+		// Write I/F.
+		.wr_en	(s_axis_tvalid	),
+		.din	(s_axis_tdata[DATA_WIDTH+ADDR_WIDTH-1:DATA_WIDTH]	),
+		
+		// Read I/F.
+		.rd_en	(fifo_rd_en		),
+		.dout	(fifo_dout[DATA_WIDTH+ADDR_WIDTH-1:DATA_WIDTH]		),
+		
+		// // Flags.
+		// .full	(		),
+		// .empty	(		)
+    );
+
+
 // Fifo connections.
-assign fifo_rd_en		= m_axi_wready & data_state;
+// assign fifo_rd_en		= m_axi_wready & data_state;
+assign fifo_rd_en		= read_fifo_state;
 assign s_axis_tready 	= ~fifo_full;
 
 // Write Address Channel.
@@ -186,9 +211,6 @@ assign m_axi_awqos		= 4'b0000;
 // All bytes are written.
 assign m_axi_wstrb 		= '1;
 
-// Address generation.
-assign addr_base		= addr_reg_r;
-assign addr_acc			= addr_r + BYTES_PER_BURST;
 
 // Registers.
 always @(posedge clk) begin
@@ -196,33 +218,25 @@ always @(posedge clk) begin
 		// State register.
 		state			<= INIT_ST;
 		
-		// Registers.
-		addr_reg_r		<= 0;
-		nburst_reg_r	<= 0;
 		addr_r			<= 0;
+		data_r			<= 0;
 
 		// Fifo signals.
 		fifo_dout_r		<= 0;
 		fifo_empty_r	<= 1;
-
-		// Burst counter.
-		cnt_burst		<= 0;
-		cnt_nburst		<= 0;
 	end
 	else begin
 		// State register.
 		case (state)
 			INIT_ST:
-				if (START_REG == 1'b1)
-					state <= READ_REGS_ST;
+				if (~fifo_empty)
+					state <= READ_FIFO_ST;			
 
-			READ_REGS_ST: // latch ADDR_REG & NBURST_REG and compute addr_base.
+			READ_FIFO_ST: 
 				state <= INIT_ADDR_ST;
 
-			INIT_ADDR_ST: // latch addr_base into addr_r, which goes to output.
-				state <= ADDR_ST;
 
-			INCR_ADDR_ST:
+			INIT_ADDR_ST:
 				state <= ADDR_ST;
 
 			ADDR_ST: // wait for slave to receive the addr (addr_r) we just sent.
@@ -230,57 +244,28 @@ always @(posedge clk) begin
 					state <= DATA_ST;
 
 			DATA_ST: // perform BURST_LENGTH number of axi transfers. 
-				if (  (m_axi_wready == 1'b1) && (m_axi_wvalid == 1'b1) && (cnt_burst == BURST_LENGTH) )
+				if (  (m_axi_wready == 1'b1) && (m_axi_wvalid == 1'b1) )
 					state <= RESP_ST;
 
 			RESP_ST: // wait response from slave
 				if (m_axi_bvalid == 1'b1)
-					state <= NBURST_ST;
-
-			NBURST_ST: // repeat the transfer steps above if not yet 
-									// performed nburst_reg_r number of BURST_LENGTH-axi-transfers.
-				if (cnt_nburst == nburst_reg_r)
-					state <= END_ST;
-				else
-					state <= INCR_ADDR_ST;
-
-			END_ST:
-				if (START_REG == 1'b0)
-					state <= INIT_ST;
+					if (~fifo_empty)
+						state <= READ_FIFO_ST;		
+					else 		
+						state <= INIT_ST;
 		endcase
 		
-		// Registers.
-		if (read_regs_state == 1'b1) begin
-			addr_reg_r		<= ADDR_REG;
-			nburst_reg_r	<= NBURST_REG;
-		end
-
 		// Address generation.
-		if (init_addr_state == 1'b1)
-			addr_r	<= addr_base;
-		else if (incr_addr_state == 1'b1)
-			addr_r	<= addr_acc;
+		if (init_addr_state == 1'b1) begin// latch data and addr from fifo.
+			addr_r	<= fifo_dout_r[DATA_WIDTH+ADDR_WIDTH-1:DATA_WIDTH];
+			data_r  <= fifo_dout_r[DATA_WIDTH-1:0];
+		end
 		
 		// Fifo signals.
 		if (fifo_rd_en == 1'b1) begin
 			fifo_dout_r		<= fifo_dout;
 			fifo_empty_r 	<= fifo_empty;
 		end
-
-		// Burst counter
-		// Count the number of axi transfers up to BURST_LENGTH.
-		// In each axi transfer BYTES_PER_AXI_TRANSFER number of bytes is sent.
-		if (addr_state == 1'b1)
-			cnt_burst	<= 0;
-		else if (m_axi_wvalid == 1'b1 && m_axi_wready == 1'b1)
-			cnt_burst <= cnt_burst + 1;
-
-		// count the number of BURST_LENGTH-axi-transfer.
-		if (read_regs_state == 1'b1)
-			cnt_nburst <= 0;
-		else if (m_axi_bvalid == 1'b1 && m_axi_bready == 1'b1)
-			cnt_nburst <= cnt_nburst + 1;
-
     end
 end
 
@@ -290,9 +275,8 @@ end
 always_comb begin
 	// Default.
 	init_state		    = 1'b0;
-	read_regs_state		= 1'b0;
+	read_fifo_state		= 1'b0;
 	init_addr_state		= 1'b0;
-	incr_addr_state		= 1'b0;
 	addr_state			= 1'b0;
 	data_state			= 1'b0;
 	resp_state			= 1'b0;
@@ -301,14 +285,11 @@ always_comb begin
 		INIT_ST:
 			init_state = 1'b1;
 
-		READ_REGS_ST:
-			read_regs_state	= 1'b1;
+		READ_FIFO_ST:
+			read_fifo_state	= 1'b1;
 
 		INIT_ADDR_ST:
 			init_addr_state	= 1'b1;
-
-		INCR_ADDR_ST:
-			incr_addr_state	= 1'b1;
 
 		ADDR_ST:
 			addr_state		= 1'b1;
@@ -326,13 +307,11 @@ end
 assign m_axi_awaddr		= addr_r;
 assign m_axi_awvalid	= addr_state;
 
-assign m_axi_wdata		= fifo_dout_r;
-assign m_axi_wlast		= (cnt_burst == BURST_LENGTH)? 1'b1 : 1'b0;
+assign m_axi_wdata		= data_r;
+assign m_axi_wlast		= 1'b1;
 assign m_axi_wvalid		= ~fifo_empty_r & data_state;
 
 assign m_axi_bready		= resp_state;
-
-assign IDLE_REG         = init_state;
 
 endmodule
 

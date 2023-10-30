@@ -16,7 +16,8 @@ module qt3_tpu_v1
 		parameter N_KERNEL = 4,
 		parameter N_CONV_UNIT = 8,
 		parameter FW    = 253,
-		parameter UNIT_BURSTS = 2048 // need to be power of 2.
+		parameter UNIT_BURSTS = 2048, // need to be power of 2.
+		parameter N_DSP_GROUP = 4
 
 	)
 	( 	
@@ -137,11 +138,11 @@ wire						m_axis_tready	;
 /************************/
 /* AXIS Slave Interfase */
 /************************/
-wire						s_axis_tready	;
-wire	[DATA_WIDTH-1:0]	s_axis_tdata	;
-wire	[DATA_WIDTH/8-1:0]	s_axis_tstrb	;
-wire						s_axis_tlast	;
-wire						s_axis_tvalid   ;
+wire								s_axis_tready	;
+wire	[DATA_WIDTH+ADDR_WIDTH-1:0]	s_axis_tdata	;
+wire	[DATA_WIDTH/8-1:0]			s_axis_tstrb	;
+wire								s_axis_tlast	;
+wire								s_axis_tvalid   ;
 	
 /********************/
 /* Internal signals */
@@ -162,12 +163,7 @@ wire	     	WIDLE_REG	;
 
 
 
-wire        start;
-wire [31:0] partial_sum;
-
-
-wire [2 * 32 - 1:0] stimulus;
-wire [5 * 32 - 1:0] probe;
+wire [31:0] acc;
 
 
 
@@ -220,8 +216,8 @@ localparam BYTES_PER_BURST			= (BURST_LENGTH + 1) * BYTES_PER_AXI_TRANSFER; // 1
 
 
 
-wire [B_PIXEL-1:0] partial_sum_i [0:N_CONV_UNIT-1];
-wire [B_PIXEL-1:0] partial_sum_o [0:N_CONV_UNIT-1];
+wire [2*B_PIXEL*N_KERNEL-1:0] acc_i [0:N_CONV_UNIT-1];
+wire [2*B_PIXEL*N_KERNEL-1:0] acc_o [0:N_CONV_UNIT-1];
 wire [B_INST-1:0]  inst_i        [0:N_CONV_UNIT-1];
 wire [B_INST-1:0]  inst_o        [0:N_CONV_UNIT-1];
 
@@ -267,6 +263,9 @@ reg [3:0] state;
 
 
 
+wire [17:0] oper 		   	    ;
+wire [2:0]  act_func	   	    ;
+
 wire [31:0] wei_addr 		    ;
 wire [6:0]  wei_n_last_burst    ;
 wire [24:0] wei_n_rema_bursts   ;
@@ -278,6 +277,10 @@ wire [24:0] ftm_n_rema_bursts   ;
 
 wire [63:0] conv_para           ;
 wire 		conv_para_we		;
+
+wire [31:0] wei_shape  ;
+wire [31:0] ftm_shape  ;
+wire [31:0] out_shape  ;
 
 wire [31:0] out_addr            ;
 
@@ -297,14 +300,14 @@ ctrl #(
 
 		.START_REG      (START_REG      ),
 
-		.start          (start          ),
-
         .fifo_wr_en     (fifo_wr_en_i),
         .fifo_din       (fifo_din_i  ),
 		.fifo_ready     (fifo_ready_i)
 	);
 
 
+assign oper	    = fifo_din_i[28:11]; // 18-bits.
+assign act_func = oper[2:0];
 
 assign wei_addr 		 = fifo_din_i[31:0];
 assign wei_n_last_burst  = fifo_din_i[38:32]; // number of valid bytes in last burst.
@@ -316,6 +319,22 @@ assign ftm_n_rema_bursts = fifo_din_i[127:103];
 
 assign conv_para         = fifo_din_i[191:128];
 assign out_addr          = fifo_din_i[223:192];
+
+
+assign w1  = conv_para[5:4]; 
+assign h1  = conv_para[7:6]  ; 
+assign c2  = conv_para[31:20];
+
+assign pad    = conv_para[3:2] ;
+assign stride = conv_para[1:0] ;
+
+assign k1      = conv_para[9:0] ;
+assign k2     = conv_para[19:10]; 
+
+// Requirement: 2 * pad + 1 == k1 == k2.
+assign out_shape[9:0]        =  w1; // w
+assign out_shape[19:10]      =  h1; // h
+assign out_shape[31:20]      =  c2; // c
 
 // Assume c1 is divisible by N_CONV_UNIT in the case of c1 > N_CONV_UNIT.
 // assign c1 = conv_para[19:8];
@@ -596,12 +615,12 @@ assign cu_sel_i = wei_pending_i ? wei_cu_sel :
 
 
 
-data_writer
+ddr_reader
     #(
         .DATA_WIDTH  (DATA_WIDTH),
 		.N_CONV_UNIT (N_CONV_UNIT)
     )
-    data_writer_i
+    ddr_reader_i
 	( 
         .clk    		(aclk			),
 		.rstn			(aresetn		),
@@ -618,20 +637,16 @@ data_writer
 
 
 
+wire          		   pipe_en  ;
+wire [N_CONV_UNIT-1:0] pipe_en_i;
+wire [N_CONV_UNIT-1:0] pipe_en_o;
 
-// out_addr 
-
-
-
+wire [N_CONV_UNIT-1:0] acc_o_valid;
 
 
 generate
 genvar i;
 	for (i=0; i < N_CONV_UNIT; i=i+1) begin : GEN_CONV_UNIT
-
-
-        assign partial_sum_i[i] = (i==0) ? 0 : partial_sum_o_arr[i-1];
-        assign inst_i[i] = (i==0) ? conv_inst : inst_o[i-1];
 
 		// Each with 4 groups of 4-DSP, 10 36kb-BRAM as weight buffer,  4 36kb-BRAM as kernel buffer.
 		// Each perform 16 muls per cycle.
@@ -650,6 +665,10 @@ genvar i;
 
 				.clk		    (aclk			),
 				.rstn         	(aresetn		),
+
+        		.pipe_en    	(pipe_en       ),
+        		.pipe_en_i  	(pipe_en_i[i]  ),
+        		.pipe_en_o  	(pipe_en_o[i]  ),
 
 				.para           (conv_para      ),
 				.para_we        (conv_para_we   ),
@@ -674,12 +693,15 @@ genvar i;
 				.fb_empty       (fb_empty[i]      ),
 				.di             (di               ),
 
-				.partial_sum_i  (partial_sum_i[i]),
-				.partial_sum_o  (partial_sum_o[i]),
+				.acc_i  		(acc_i[i]   	  ),
+				.acc_o  		(acc_o[i]   	  ),
+				.acc_o_valid  	(acc_o_valid[i]	  ), // only the last (not tail) conv_unit will be checked.
+
 				.inst_i			(inst_i[i]		  ),
 				.inst_o			(inst_o[i]		  ),
 			);
 		
+
 		// Use en[i] to select one the N_CONV_UNIT conv_units.
 		// Use wei_pending_i and ftm_pending_i to select one of wb or fb.
 		assign en[i]    = (cu_sel_i == i) ? 1 : 0;
@@ -688,6 +710,10 @@ genvar i;
 		
 		// Only look at tail: if tail is sufficient, then all others are sufficient.
 		assign wb_sufficient_reduc[i] = (is_tail[i]) ? wb_sufficient[i] : 0;
+
+		assign pipe_en_i[i] = (i==0) ? 0 	     : pipe_en_o[i-1];
+        assign acc_i[i] 	= (i==0) ? 0 	     : acc_o_arr[i-1];
+        assign inst_i[i]	= (i==0) ? conv_inst : inst_o[i-1];
 	end
 endgenerate 
 
@@ -700,19 +726,60 @@ assign ftm_pending_i = (ftm_cnt_r == ftm_cnt_incr_r) ? 0 : 1;
 
 
 
+wire [N_KERNEL*B_PIXEL:0] act_do;
+wire 					  act_do_vaild;
 
+// TODO: write output data directly back to fb BRAM until fb BRAM run out of space.
 activation_unit #(
-
+		.N_KERNEL(N_KERNEL),
+		.B_PIXEL (B_PIXEL)
 	)
 	activation_unit_i
 	(
-		.clk		    (aclk			             ),
-		.rstn         	(aresetn					 ),
+		.clk		    (aclk			      		   ),
+		.rstn         	(aresetn					   ),
 
-		.inst           (act_inst                    ),
-		.di             (partial_sum_o[N_CONV_UNIT-1]),
-		.do				()
+		.type           (act_func             		   ),
+
+		.di             (acc_o		[N_CONV_UNIT-1]),
+		.di_valid	    (acc_o_valid[N_CONV_UNIT-1]),
+
+		.do				(act_do		   			),
+		.do_valid		(act_do_vaild  			)
 	);
+      
+
+
+
+// Whether to cache on BRAM or not, need always write a copy to ddr, since 
+	// they may be used several time in different layers.
+// Need to do a lot of addr compute works.
+ddr_writer
+    #(
+		.N_KERNEL(N_KERNEL),
+		.B_PIXEL (B_PIXEL),
+		.DATA_WIDTH (DATA_WIDTH),
+		.N_DSP_GROUP (N_DSP_GROUP)
+    )
+    ddr_writer_i
+	( 
+        .clk    		(aclk			),
+		.rstn			(aresetn		),
+
+		.base_addr	 	(out_addr       ),
+
+		// Input data.
+        .ddr_we         (act_do_vaild   ),
+        .ddr_di         (act_do         ),
+
+
+		// AXIS Slave.
+		.m_axis_tdata 	(s_axis_tdata ),
+		.m_axis_tvalid	(s_axis_tvalid ),
+		.m_axis_tready	(s_axis_tready )
+    );
+
+
 
 
 
@@ -854,7 +921,7 @@ axi_mst
 		.WSTART_REG		(WSTART_REG		),
 		.WADDR_REG		(WADDR_REG		),
 		.WNBURST_REG	(WNBURST_REG	),
-		.WIDLE_REG  	(WIDLE_REG	)
+		.WIDLE_REG  	(WIDLE_REG	    )
 		
 
 		// .probe (probe)
