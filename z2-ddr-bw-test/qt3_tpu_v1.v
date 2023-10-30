@@ -317,7 +317,9 @@ assign ftm_n_rema_bursts = fifo_din_i[127:103];
 assign conv_para         = fifo_din_i[191:128];
 assign out_addr          = fifo_din_i[223:192];
 
-
+// Assume c1 is divisible by N_CONV_UNIT in the case of c1 > N_CONV_UNIT.
+// assign c1 = conv_para[19:8];
+// assign id_last = (c1 > N_CONV_UNIT) ? N_CONV_UNIT - 1 : c1 - 1; 
 
 
 reg [31:0] wei_addr_r 		   ;
@@ -333,16 +335,20 @@ reg [31:0] ftm_cnt_incr_r      ;
 reg [31:0] ftm_cnt_r           ;
 
 
+
+wire [N_CONV_UNIT-1:0] wb_sufficient       ;
+wire [N_CONV_UNIT-1:0] wb_sufficient_reduc ;
+wire [N_CONV_UNIT-1:0] wb_full             ;           
+wire [N_CONV_UNIT-1:0] fb_sufficient       ; 
+wire [N_CONV_UNIT-1:0] fb_full             ;         
+
 wire wb_sufficient_i ;
 wire wb_full_i       ;           
 wire wb_done_i       ;    
-
-
 wire fb_sufficient_i ; 
 wire fb_full_i       ;         
 wire fb_done_i       ;    
   
-
 
 
 
@@ -461,14 +467,15 @@ begin
 			
 			wei_cnt_r <= wei_cnt_r + BYTES_PER_AXI_TRANSFER;
 
-			if (wei_cu_sel == N_CONV_UNIT-1)
+			// TODO: should be min(N_CONV_UNIT, c1).
+			// TODO: consider replace following with local checks in each conv_units: 
+				// pass down sel signal in cyclic order. Since they know whethe themselves are the tail,
+				// so it would be convenit to know when to wrap.
+			if (wei_cu_sel == N_CONV_UNIT-1) 
 				wei_cu_sel <= 0;
 			else
 				wei_cu_sel <= wei_cu_sel + 1;
 		end		
-
-
-
 
 
 
@@ -631,28 +638,41 @@ genvar i;
 		// We need 8 such unit along channel dir.
 		conv_unit #(
 				.DATA_WIDTH(DATA_WIDTH),
-				.N_KERNEL  (N_KERNEL)
+				.N_KERNEL  (N_KERNEL),
+				.N_CONV_UNIT(N_CONV_UNIT),
+				.ID (4*i)
 			)
 			conv_unit_i
 			(
+				// Together with c1 can allow the conv to know whether it is the last one
+					// in case c1 < N_CONV_UNIT * N_CONV_UNIT.	
+				.is_tail		(is_tail[i]		), 
+
 				.clk		    (aclk			),
 				.rstn         	(aresetn		),
 
 				.para           (conv_para      ),
 				.para_we        (conv_para_we   ),
 
-				.wb_sufficient  (wb_sufficient_i),
-				.wb_full        (wb_full_i      ),
-				.fb_sufficient  (fb_sufficient_i),
-				.fb_full        (fb_full_i      ),
 
-				.wb_we          (wb_we[i]       ),
-				.wb_clr         (wb_clr[i]      ),
-				.wb_empty       (wb_empty[i]    ),
-				.fb_we          (fb_we[i]       ),
-				.fb_clr         (fb_clr[i]      ),
-				.fb_empty       (fb_empty[i]    ),
-				.di             (di             ),
+				// TODO: implement full logic. Need to first figure 
+					// out how to read from strided buffer in each conv_unit.
+
+				.wb_sufficient  (wb_sufficient[i]  ),
+				.wb_full        (wb_full      [i]  ),
+				.fb_sufficient  (fb_sufficient[i]  ),
+				.fb_full        (fb_full      [i]  ),
+
+
+				// TODO: implement clr logic to clear regs in 
+					// all conv_unit to be ready for next layer.
+				.wb_we          (wb_we[i]         ),
+				.wb_clr         (wb_clr[i]        ),
+				.wb_empty       (wb_empty[i]      ),
+				.fb_we          (fb_we[i]         ),
+				.fb_clr         (fb_clr[i]        ),
+				.fb_empty       (fb_empty[i]      ),
+				.di             (di               ),
 
 				.partial_sum_i  (partial_sum_i[i]),
 				.partial_sum_o  (partial_sum_o[i]),
@@ -660,12 +680,18 @@ genvar i;
 				.inst_o			(inst_o[i]		  ),
 			);
 		
+		// Use en[i] to select one the N_CONV_UNIT conv_units.
+		// Use wei_pending_i and ftm_pending_i to select one of wb or fb.
 		assign en[i]    = (cu_sel_i == i) ? 1 : 0;
 		assign wb_we[i] = en[i] & (wei_pending_i ? mem_we : 0);
 		assign fb_we[i] = en[i] & (ftm_pending_i ? mem_we : 0);
 		
+		// Only look at tail: if tail is sufficient, then all others are sufficient.
+		assign wb_sufficient_reduc[i] = (is_tail[i]) ? wb_sufficient[i] : 0;
 	end
 endgenerate 
+
+assign wb_sufficient_i = (wb_sufficient_reduc > 0) ? 1'b1 : 1'b0;
 
 assign conv_para_we = fifo_wr_en_i & init_st;
 

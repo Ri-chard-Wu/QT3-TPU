@@ -24,7 +24,7 @@ module strided_buffer
         input wire [B_BUF_ADDR*N_BUF_X-1:0] rdaddr;
         output wire [DATA_WIDTH*N_BUF_X-1:0] do   ,
 
-        output wire sufficient
+        output wire tog
         // output wire [3*B_COORD-1:0] cur_coord,
         // output wire done_ld 
     );
@@ -33,7 +33,7 @@ module strided_buffer
 
 reg  we_r;
 reg  clr_r;
-reg sufficient_r;
+reg tog_r;
 
 reg  [DATA_WIDTH-1:0] di_r;
 
@@ -77,7 +77,7 @@ begin
 
         sel_wr      <= 0;
 
-        sufficient_r <= 0;
+        tog_r <= 0;
                 
         for (i=0; i<N_BUF_X; i=i+1) wraddr[i] <= 0;
 
@@ -102,7 +102,7 @@ begin
 
             sel_wr      <= 0;
 
-            sufficient_r <= 0;
+            tog_r <= 0;
                     
             for (i=0; i<N_BUF_X; i=i+1) wraddr[i] <= 0;
         end
@@ -116,7 +116,7 @@ begin
                     // x
                     if(y_wr_next == h_i) begin
                         x_wr_r <= 0;
-                        sufficient_r <= 1'b1;
+                        tog_r <= ~tog_r;
                     end              
                     else
                         x_wr_r <= x_wr_next;
@@ -177,6 +177,6 @@ assign cur_coord = {c_wr_r, y_wr_r, x_wr_r};
 
 assign done_ld = (x_wr_r == w_i);
 
-assign sufficient = sufficient_r;
+assign tog = tog_r;
 
 endmodule
