@@ -2,7 +2,7 @@
 module ctrl
     #(
         parameter PMEM_N  = 10,
-        parameter FW      = 253
+        parameter FW      = 242
     )
     (
 		input	wire          clk    ,
@@ -15,9 +15,9 @@ module ctrl
 
         output wire           start,
 
-        output wire          fifo_wr_en,
-        output wire [FW-1:0] fifo_din,
-        input  wire          fifo_ready
+        output wire          cfg_valid,
+        output wire [FW-1:0] cfg_data ,
+        input  wire          cfg_ready
 	);
 
 
@@ -84,6 +84,7 @@ wire	[PMEM_N-1:0]	 	pc_i;
 
 reg  pc_rst_i       ;
 reg  fetch_state        ;
+reg	 cfg_valid_i;
 reg  end_state            ;
 reg  ir_en_i		    ;
 reg  pc_en_i			    ;
@@ -149,7 +150,7 @@ always @(posedge clk) begin
 				state <= DECODE_ST;
 
 			SET0_ST:
-                if(fifo_ready)
+                if(cfg_ready)
 				    state <= FETCH_ST;
 
 	
@@ -186,7 +187,7 @@ always_comb begin
     reg_wen_i           = 1'b0;
     ir_en_i		        = 1'b0;
     pc_en_i			    = 1'b0;
-    fifo_wr_en_i	    = 1'b0;
+    cfg_valid_i	    = 1'b0;
     end_state    	    = 1'b0;
     
 
@@ -210,7 +211,7 @@ always_comb begin
 			// ir_en_i			= 1'b1;
 			// pc_en_i			= 1'b1;
 
-			fifo_wr_en_i	= 1'b1;
+			cfg_valid_i	= 1'b1;
 		end
 
         END_ST:
@@ -260,10 +261,8 @@ regfile_8p
 		.dout6	(reg_dout6_i	)
     );
 
-// 8 + 3 + 18 + 32 * 7
-assign fifo_din = 	{	opcode_i   ,
-                        page_i     ,
-                        oper_i     ,
+// 18 + 32 * 7 = 242
+assign cfg_data = 	{	oper_i     , // [28:11]
 						reg_dout6_i,
 						reg_dout5_i,
 						reg_dout4_i,
@@ -289,12 +288,13 @@ assign reg_addr5_i	= ir_r[9:5]  ;
 assign reg_addr6_i	= ir_r[4:0]  ;
 
 assign reg_addr7_i	= ir_r[45:41];
-
 assign reg_din7_i = imm_i;
 
 
 
-assign start = pc_rst_i;
+assign cfg_valid	= cfg_valid_i;
+
+// assign start = pc_rst_i;
 
 // Multiply address by 8 to convert from 8-bytes-addressing to byte-addressing.
 assign	pmem_addr = {pc_r[PMEM_N-4:0], 3'b000};
