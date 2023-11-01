@@ -23,7 +23,10 @@ module conv_unit
         parameter DATA_WIDTH = 64,
         parameter B_COORD = 8,
 
-        parameter N_CONV_UNIT = 8
+        parameter N_CONV_UNIT = 8,
+
+		parameter UNIT_BURSTS_WEI = 32,  // need to be power of 2.
+		parameter UNIT_BURSTS_FTM = 1024  // need to be power of 2.	        
         
         
     )
@@ -64,6 +67,7 @@ module conv_unit
         input wire [B_INST-1:0] inst_o,
  
     );
+
 
 
 wire [N_DSP_GROUP-1:0] is_tail_i;
@@ -107,7 +111,6 @@ wire [B_INST-1:0] inst_o_arr [0:N_DSP_GROUP-1];
 wire [B_BUF_ADDR*N_FTMBUF_X-1:0] fb_rd_addr ;
 wire [B_BUF_ADDR-1:0]            wb_rd_addr [0:N_KERNEL-1];
 
-// wire [3*B_COORD-1:0] cur_coord [0:1];
 wire [B_COORD-1:0] c_i [0:1];
 wire [B_COORD-1:0] y_i [0:1];
 wire [B_COORD-1:0] x_i [0:1];
@@ -247,15 +250,15 @@ assign wei_pad                 = wb_cfg[3:2] ;
 assign wei_shape[0+:9]         = wb_cfg[5:4] ; // w
 assign wei_shape[9+:9]         = wb_cfg[7:6] ; // h
 assign wei_shape[18+:7]        = wb_cfg[8+:7]; // n_wrap_c
-assign wei_n_wrap_c_acc        = 0;
+assign wei_n_wrap_c_sum        = wb_cfg[8+:7]; // n_wrap_c
 
 // assign wei_c1 = wei_shape[31:20];
 
-// [n_wrap_c_acc: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits].
+// [n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits].
 assign ftm_shape[0+:9]         = fb_cfg[0+:9] ; // w
 assign ftm_shape[9+:9]         = fb_cfg[9+:9] ; // h
-assign ftm_shape[18+:7]        = fb_cfg[18+:7]; // n_wrap_c
-assign ftm_n_wrap_c_acc        = fb_cfg[25+:7];
+assign ftm_shape[18+:7]        = fb_cfg[25+:7]; // n_wrap_c (of each particular ftm).
+assign ftm_n_wrap_c_sum        = fb_cfg[18+:7]; // n_wrap_c_sum
 
 
 assign rd_en = (pipe_en == 1'b1) ? (ID == 0) ? 1'b1 : pipe_en_i
@@ -269,7 +272,8 @@ strided_buffer_reader
         .B_SHAPE   (B_SHAPE)  ,
         .DATA_WIDTH (DATA_WIDTH),
         .B_COORD    (B_COORD),
-        .N_CONV_UNIT(N_CONV_UNIT)
+        .N_CONV_UNIT(N_CONV_UNIT),
+        .UNIT_BURSTS(UNIT_BURSTS_FTM)
     )
     ftm_buffer_reader_i
     (
@@ -282,14 +286,19 @@ strided_buffer_reader
         .ftm_shape(ftm_shape),
         .wei_shape(wei_shape),
 
-        .rd_en   (rd_en)         ,
+        .rd_en   (rd_en)         , // == 0 when pipeline halts.
 
         // TODO: fb_rd_addr and fb_rd_sel may not be synced, need add delay regs.
         .rd_addr  (fb_rd_addr)     ,        
         .rd_sel  (fb_rd_sel)     ,
 
         // output x, y coord to read, so we know whether to pad or not.
-        .tog      ( )
+        // .tog      ( ),
+
+        .is_last  (ftm_is_last ),
+
+        .rptr_incr_en  (0),
+        .rptr          ()
     );
 
 
@@ -299,7 +308,8 @@ strided_buffer
         .B_BUF_ADDR (B_BUF_ADDR),
         .B_SHAPE   (B_SHAPE)  ,
         .DATA_WIDTH (DATA_WIDTH),
-        .B_COORD    (B_COORD)
+        .B_COORD    (B_COORD),
+        .UNIT_BURSTS(UNIT_BURSTS_WEI)
     )
     ftm_buffer
     (
@@ -307,7 +317,7 @@ strided_buffer
         .rstn (rstn)        ,     
 
         .shape        (ftm_shape       ),
-        // .n_wrap_c_acc (ftm_n_wrap_c_acc),
+        .n_wrap_c_sum (ftm_n_wrap_c_sum),
 
         .clr(fb_clr),
         
@@ -319,10 +329,9 @@ strided_buffer
         
 
         .fb_wptr  (fb_wptr),
-        .tog (fb_tog),
-
-        // .cur_coord(cur_coord[0]), 
-        // .done_ld(done_ld[0])
+        .tog      (fb_tog ),
+        // .full     (fb_full),
+        .wptr     ()
     );
 
 
@@ -337,6 +346,8 @@ assign fb_do = (0 == fb_rd_sel) ? fb_do_raw[0*DATA_WIDTH+:DATA_WIDTH] :
                (3 == fb_rd_sel) ? fb_do_raw[3*DATA_WIDTH+:DATA_WIDTH] :
                (4 == fb_rd_sel) ? fb_do_raw[4*DATA_WIDTH+:DATA_WIDTH] : 0; // 0: for padding.
 
+
+wire [N_KERNEL-1:0] wb_full_i;
 
 generate
 genvar i, ii;
@@ -363,12 +374,16 @@ genvar i, ii;
                 .ftm_shape(wei_shape), // yes, wei_shape.
                 .wei_shape(wei_shape),
 
-                .rd_en   (rd_en)    ,
+                .rd_en   (rd_en)    ,  // == 0 when pipeline halts.
                 
                 .rd_addr  (wb_rd_addr[i]),
                 .rd_sel(),
 
-                .tog ()
+                // .tog     (),
+                .is_last      (),
+
+                .rptr_incr_en (ftm_is_last),
+                .rptr         (wb_rptr[i])
             );
 
 
@@ -387,7 +402,8 @@ genvar i, ii;
                 .clk  (clk	)	    ,    
                 .rstn (rstn)         ,     
 
-                .shape (wei_shape),
+                .shape        (wei_shape),
+                .n_wrap_c_sum (wei_n_wrap_c_sum ),
 
                 .clr(wb_clr[i]),
                 
@@ -397,10 +413,10 @@ genvar i, ii;
                 .rdaddr(wb_rd_addr[i])         ,
                 .do    (wb_do_i[i])  ,
 
-                .tog (wb_tog[i])     // will toggle whenever one kernel is completly loaded.       
-
-                // .cur_coord(cur_coord[1]),
-                // .done_ld(done_ld[1])
+                .tog (wb_tog[i]),     // will toggle whenever one kernel is completly loaded.
+                 
+                // .full     (wb_full   ),
+                .wptr     (wb_wptr[i])                   
             );
 
         assign wb_we_i[i] = (i == 0) ? (wb_tog[0] == wb_tog[N_KERNEL-1]) ? wb_we : 1'b0 :
@@ -411,19 +427,18 @@ genvar i, ii;
             assign wb_do[ii][i*B_PIXEL+:B_PIXEL] = wb_do_i[i][ii*B_PIXEL+:B_PIXEL];
         end
       
+
+        assign wb_full_i[i] = (wb_wptr[i] > wb_rptr[i]) ? 
+                (N_BUF_ENTRIES + wb_rptr[i] - wb_wptr[i] < UNIT_BURSTS) ? 1'b1: 1'b0 : // wraddr > rdaddr
+                (                wb_rptr[i] - wb_wptr[i] < UNIT_BURSTS) ? 1'b1: 1'b0 ; // wraddr <= rdaddr
+
 	end
 endgenerate 
 
+
+assign wb_full = |wb_full_i;
+
 assign wb_suff = wb_tog[N_KERNEL-1];
-
-
-// assign c_i[0] = cur_coord[0][0*B_COORD+:B_COORD];
-// assign y_i[0] = cur_coord[0][1*B_COORD+:B_COORD];
-// assign x_i[0] = cur_coord[0][2*B_COORD+:B_COORD];
-
-// assign c_i[1] = cur_coord[1][0*B_COORD+:B_COORD];
-// assign y_i[1] = cur_coord[1][1*B_COORD+:B_COORD];
-// assign x_i[1] = cur_coord[1][2*B_COORD+:B_COORD];
 
 
 

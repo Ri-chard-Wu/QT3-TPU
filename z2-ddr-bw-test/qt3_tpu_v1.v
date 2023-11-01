@@ -16,7 +16,11 @@ module qt3_tpu_v1
 		parameter N_KERNEL = 4,
 		parameter N_CONV_UNIT = 8,
 		parameter FW    = 242,
-		parameter UNIT_BURSTS = 2048, // need to be power of 2.
+
+		// The largest kernel [3, 3, 512] == 72 bursts (3*3*512*2 / 128).
+		// A ftm that can just fill entire fb (2621.44 kb) == 2560 bursts.
+		parameter UNIT_BURSTS_WEI = 32,  // need to be power of 2.
+		parameter UNIT_BURSTS_FTM = 1024,  // need to be power of 2.
 		parameter N_DSP_GROUP = 4
 
 	)

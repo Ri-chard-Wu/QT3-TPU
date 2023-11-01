@@ -23,8 +23,14 @@ module strided_buffer_reader
         output wire [B_BUF_ADDR*N_BUF_X-1:0] rd_addr,
         
         output wire   [3:0] rd_sel,
-        output wire   tog // toggle whenever one complete sweep of the ftm is done.
+        // output wire   tog // toggle whenever one complete sweep of the ftm is done.
+
+        output wire                  is_last,
+        input  wire                  rptr_incr_en,
+        output wire [B_BUF_ADDR-1:0] rptr
     );
+
+
 
 reg tog_r;
 
@@ -53,7 +59,9 @@ wire  [7:0]           dc_lim;
 wire [B_COORD-1:0]    x_next;
 wire [B_COORD-1:0]    y_next;
 
-wire [B_BUF_ADDR-1:0] addr     ;
+// give it one extra bit to support wrap.
+wire [B_BUF_ADDR:0]   addr       ;
+reg  [B_BUF_ADDR-1:0] rptr_r;
 
 
 wire [7:0] n_wrap_c;
@@ -94,26 +102,20 @@ begin
         x_r <= 0;
         y_r <= 0;
 
-        tog_r <= 0;
-
+        // tog_r <= 0;
+        rptr_r  <= 0;
     end 
     else begin    
 
-		// case(state)
-
-		// 	INIT_ST:
-        //         if (start == 1'b1)
-        //             state <= COMPUTE_ST;
-	
-        //     COMPUTE_ST:
-        //         if()
-
-		// endcase	
 
 
         if(rd_en == 1'b1) begin
             
+
+
             if(dc_r == dc_lim) begin
+
+                dc_r <= 0;
 
                 // sweep [y, y + dy]
                 if(dy_r == dy_lim) begin  // if reached y + dy end.
@@ -130,10 +132,14 @@ begin
                             y_r <= 0;
 
                             if(x_next > w_ftm + 2*pad - w_wei) begin // reached right boundary of fm.
-                                
+
+                                x_r <= 0; 
+
                                 tog_r <= ~tog_r;
 
-                                x_r <= 0;                            
+                                if (rptr_incr_en)  // last para of ftm.
+                                    rptr_r <= addr[B_BUF_ADDR-1:0];
+                                
 
                                 x_quo_base_r <= 0;
                                 x_rem_base_r <= 0;
@@ -187,17 +193,13 @@ begin
     end
 end    
 
-
-
+assign is_last = (dc_r == dc_lim) && (dy_r == dy_lim) && (dx_r == dx_lim) &&
+                 (y_next > h_ftm + 2*pad - h_wei) && (x_next > w_ftm + 2*pad - w_wei);
 
 assign x_min = pad;
 assign y_min = pad;
 assign x_max = (w_ftm-1) + pad;
 assign y_max = (h_ftm-1) + pad;
-
-
-// assign x_quo_base_next = (x_rem_base_r == N_BUF_X-1)? x_quo_base_r + 1 : x_quo_base_r    ;
-// assign x_rem_base_next = (x_rem_base_r == N_BUF_X-1)? 0                : x_rem_base_r + 1;
 
 // assume stride < N_BUF_X so will warp at most once (x_quo_base_r increment at most by 1).
 assign x_quo_base_next = (x_rem_base_r + stride > N_BUF_X-1)? x_quo_base_r + 1 : 
@@ -216,16 +218,12 @@ assign w_ftm = ftm_shape[0+:9] ; // 9-bits
 assign h_ftm = ftm_shape[9+:9] ; // 9-bits
 // assign c_ftm = ftm_shape[18+:7]; // 7-bits
 
-// assign n_wrap_c = (c_wei >> $clog2(4*N_CONV_UNIT));
-
 assign dx_lim = w_wei - 1;
 assign dy_lim = h_wei - 1;
 assign dc_lim = n_wrap_c - 1;
 
-// assign dcy_lim = h_wei * n_wrap_c - 1;
 
-// y * n_wrap_c + h_wei * n_wrap_c * floor(x / N_BUF_X)
-assign addr = n_wrap_c * (y_r + dy + h_ftm * x_quo_r) + dc_r;
+assign addr = n_wrap_c * (y_r + dy + h_ftm * x_quo_r) + dc_r + rptr_r;
 
 // if [x, y] is in padded region, set sel to be an invalid value (N_BUF_X) so that the 
     // mux will assign fd_do to be 0.
@@ -236,11 +234,13 @@ generate
 genvar i;
 	for (i=0; i < N_BUF_X; i=i+1) begin : GEN_BUF
 
-        assign rd_addr[i*B_BUF_ADDR+:B_BUF_ADDR] = (i == x_rem_r) ? addr: 0;
+        assign rd_addr[i*B_BUF_ADDR+:B_BUF_ADDR] = (i == x_rem_r) ? addr[B_BUF_ADDR-1:0]: 0;
     end
 endgenerate 
 
 
 assign tog = tog_r;
+assign rptr = rptr_r;
+
 
 endmodule

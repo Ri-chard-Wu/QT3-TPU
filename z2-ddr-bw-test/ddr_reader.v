@@ -4,7 +4,12 @@ module ddr_reader
         parameter B_PIXEL = 16,
         parameter DATA_WIDTH = 64,
         parameter ADDR_WIDTH = 32	,
-        parameter N_DSP_GROUP = 4		
+        parameter N_DSP_GROUP = 4,
+
+		// The largest kernel [3, 3, 512] == 72 bursts (3*3*512*2 / 128).
+		// A ftm that can just fill entire fb (2621.44 kb) == 2560 bursts.
+		parameter UNIT_BURSTS_WEI = 32,  // need to be power of 2.
+		parameter UNIT_BURSTS_FTM = 1024  // need to be power of 2.			
         
     )
     (
@@ -144,7 +149,7 @@ begin
 				state <= WEI_LOAD_ST;
 
 			WEI_INCR_ST:
-				if(~wb_full_i)
+				if(~wb_full) // might happen when try to pre-loaded kernels.
 					state <= WEI_LOAD_ST;
 
 			WEI_LOAD_ST:
@@ -169,7 +174,7 @@ begin
 				state <= FTM_LOAD_ST;
 
 			FTM_INCR_ST:
-				if(~fb_full_i)
+				if(~fb_full) // won't happen, because ftm won't be pre-loaded.
 					state <= FTM_LOAD_ST;
 
 			FTM_LOAD_ST:	
@@ -187,7 +192,7 @@ begin
 
 			wei_addr_r <= wei_addr;
 
-			if (UNIT_BURSTS >= wei_n_rema_bursts) begin // will include the last burst.
+			if (UNIT_BURSTS_WEI >= wei_n_rema_bursts) begin // will include the last burst.
 
 				wei_n_rema_bursts_r <= 0;
 				wei_n_bursts_r		<= wei_n_rema_bursts;
@@ -195,16 +200,16 @@ begin
 			end
 			else begin
 
-				wei_n_rema_bursts_r <= wei_n_rema_bursts - UNIT_BURSTS;
-				wei_n_bursts_r		<= UNIT_BURSTS;
-				wei_cnt_incr_r	    <= (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
+				wei_n_rema_bursts_r <= wei_n_rema_bursts - UNIT_BURSTS_WEI;
+				wei_n_bursts_r		<= UNIT_BURSTS_WEI;
+				wei_cnt_incr_r	    <= (UNIT_BURSTS_WEI << ($clog2(BYTES_PER_BURST)));
 			end
 		end
 		else if (wei_incr_st == 1'b1) begin
 
 			wei_addr_r <= wei_addr_r + (wei_n_bursts_r << ($clog2(BYTES_PER_BURST)));
 
-			if (UNIT_BURSTS >= wei_n_rema_bursts_r) begin // will include the last burst.
+			if (UNIT_BURSTS_WEI >= wei_n_rema_bursts_r) begin // will include the last burst.
 				
 				wei_n_rema_bursts_r <= 0;
 				wei_n_bursts_r		<= wei_n_rema_bursts_r;
@@ -213,9 +218,9 @@ begin
 			end
 			else begin
 
-				wei_n_rema_bursts_r <= wei_n_rema_bursts_r - UNIT_BURSTS;
-				wei_n_bursts_r		<= UNIT_BURSTS;
-				wei_cnt_incr_r	    <= wei_cnt_incr_r + (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
+				wei_n_rema_bursts_r <= wei_n_rema_bursts_r - UNIT_BURSTS_WEI;
+				wei_n_bursts_r		<= UNIT_BURSTS_WEI;
+				wei_cnt_incr_r	    <= wei_cnt_incr_r + (UNIT_BURSTS_WEI << ($clog2(BYTES_PER_BURST)));
 			end	
 		end
 
@@ -248,7 +253,7 @@ begin
 
 			ftm_addr_r <= ftm_addr;
 
-			if (UNIT_BURSTS >= ftm_n_rema_bursts) begin // will include the last burst.
+			if (UNIT_BURSTS_FTM >= ftm_n_rema_bursts) begin // will include the last burst.
 
 				ftm_n_rema_bursts_r <= 0;
 				ftm_n_bursts_r		<= ftm_n_rema_bursts;
@@ -256,16 +261,16 @@ begin
 			end
 			else begin
 
-				ftm_n_rema_bursts_r <= ftm_n_rema_bursts - UNIT_BURSTS;
-				ftm_n_bursts_r		<= UNIT_BURSTS;
-				ftm_cnt_incr_r	    <= (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
+				ftm_n_rema_bursts_r <= ftm_n_rema_bursts - UNIT_BURSTS_FTM;
+				ftm_n_bursts_r		<= UNIT_BURSTS_FTM;
+				ftm_cnt_incr_r	    <= (UNIT_BURSTS_FTM << ($clog2(BYTES_PER_BURST)));
 			end
 		end
 		else if (ftm_incr_st == 1'b1) begin
 
 			ftm_addr_r <= ftm_addr_r + (ftm_n_bursts_r << ($clog2(BYTES_PER_BURST)));
 
-			if (UNIT_BURSTS >= ftm_n_rema_bursts_r) begin // will include the last burst.
+			if (UNIT_BURSTS_FTM >= ftm_n_rema_bursts_r) begin // will include the last burst.
 				
 				ftm_n_rema_bursts_r <= 0;
 				ftm_n_bursts_r		<= ftm_n_rema_bursts_r;
@@ -274,9 +279,9 @@ begin
 			end
 			else begin
 
-				ftm_n_rema_bursts_r <= ftm_n_rema_bursts_r - UNIT_BURSTS;
-				ftm_n_bursts_r		<= UNIT_BURSTS;
-				ftm_cnt_incr_r	    <= ftm_cnt_incr_r + (UNIT_BURSTS << ($clog2(BYTES_PER_BURST)));
+				ftm_n_rema_bursts_r <= ftm_n_rema_bursts_r - UNIT_BURSTS_FTM;
+				ftm_n_bursts_r		<= UNIT_BURSTS_FTM;
+				ftm_cnt_incr_r	    <= ftm_cnt_incr_r + (UNIT_BURSTS_FTM << ($clog2(BYTES_PER_BURST)));
 			end	
 		end
 
@@ -392,7 +397,7 @@ endgenerate
 
 assign wb_cfg = cfg_data[82+:32]; // $r2// c1: 12-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits.
 
-// [n_wrap_c_acc: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits].
+// [n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits].
 assign fb_cfg = {fifo_dout[57+:7], cfg_data[114+:25]}; // $r3 
 
 
