@@ -15,6 +15,10 @@ module ctrl
 
         output wire           start,
 
+		output wire   	      fifo_wr_en	 ,
+		output wire [63:0]    fifo_di	     ,
+		input  wire           fifo_full 	 ,
+
         output wire          cfg_valid,
         output wire [FW-1:0] cfg_data ,
         input  wire          cfg_ready
@@ -25,23 +29,33 @@ typedef enum{
     INIT_ST            , 
     PC_RST_ST         ,
     WAIT_INST_ST       ,   
-    FETCH_ST ,
+    FETCH_ST 		,
     DECODE_ST          ,    
-        
+	REGWI_ST		,
+	SET_ST				,
     ERR_INSTR_ST       ,       
     END_ST     
 } state_t;
 
 (* fsm_encoding = "one_hot" *) state_t state;
 
+reg pc_rst_i       ;
+reg fetch_state    ;
+reg	cfg_valid_i    ;
+reg end_state      ;
+reg ir_en_i		   ;
+reg pc_en_i		   ;
+reg	reg_wen_i	   ;
+reg fifo_wr_en_i   ;
+
+
 
 reg  [63:0] ir_r;
 
-wire [7:0]  opcode_i;     // 8 bit
-wire [31:0] imm; // 32 bit
-
-
-
+wire 	[7:0]       opcode_i;     // 8 bit
+wire	[2:0]		page_i;
+wire	[17:0]		oper_i;
+wire    [31:0] 		imm_i; // 32 bit
 
 
 wire	[4:0]		reg_addr0_i;
@@ -59,10 +73,6 @@ wire	[4:0]		reg_addr7_i;
 // Write data.
 wire	[B-1:0]		reg_din7_i;
 
-wire				reg_wen_i;
-
-wire	[2:0]		page_i;
-
 // Output registers.
 wire	[B-1:0]		reg_dout0_i;
 wire	[B-1:0]		reg_dout1_i;
@@ -75,19 +85,10 @@ wire	[B-1:0]		reg_dout6_i;
 reg		[63:0]	 	ir_r;
 
 
-
-
-
 reg     [PMEM_N-1:0]	 	pc_r;
 wire	[PMEM_N-1:0]	 	pc_i;
 
 
-reg  pc_rst_i       ;
-reg  fetch_state        ;
-reg	 cfg_valid_i;
-reg  end_state            ;
-reg  ir_en_i		    ;
-reg  pc_en_i			    ;
 
 
 synchronizer_n start_reg_resync_i
@@ -134,25 +135,27 @@ always @(posedge clk) begin
 
             DECODE_ST:
 		
-				// regwi
 				if ( opcode_i == 8'b00011001 )
-					state <= REGWI0_ST;
-				// set/setb
+					state <= REGWI_ST;
 				else if ( opcode_i == 8'b01010001 || opcode_i == 8'b01011000 )
-					state <= SET0_ST;
-		                     
-				else if ( opcode_i == 8'b00111111 ) // end
-					state <= END_ST;                    
+					state <= SET_ST;
+				else if ( opcode_i == 8'b00010000 )
+					state <= PUSH_ST; 						
+				else if ( opcode_i == 8'b00111111 ) 
+					state <= END_ST;        
                 else
                     state <= ERR_INSTR_ST;
 
-			REGWI0_ST:
+			REGWI_ST:
 				state <= DECODE_ST;
 
-			SET0_ST:
+			SET_ST:
                 if(cfg_ready)
 				    state <= FETCH_ST;
 
+			PUSH_ST:
+                if(~fifo_full)
+				    state <= FETCH_ST;
 	
 			ERR_INSTR_ST:
 				state <= END_ST;
@@ -187,9 +190,9 @@ always_comb begin
     reg_wen_i           = 1'b0;
     ir_en_i		        = 1'b0;
     pc_en_i			    = 1'b0;
-    cfg_valid_i	    = 1'b0;
+    cfg_valid_i	  		= 1'b0;
     end_state    	    = 1'b0;
-    
+    fifo_wr_en_i		= 1'b0;
 
     case (state) 
 
@@ -201,24 +204,34 @@ always_comb begin
 			pc_en_i		            = 1'b1;
 		end
            
-		REGWI0_ST: begin
+		REGWI_ST: begin
 			ir_en_i			= 1'b1;
 			pc_en_i			= 1'b1;
 			reg_wen_i		= 1'b1;
 		end
 
-		SET0_ST: begin
+		SET_ST: begin
 			// ir_en_i			= 1'b1;
 			// pc_en_i			= 1'b1;
 
 			cfg_valid_i	= 1'b1;
 		end
 
+		PUSH_ST: begin
+			// ir_en_i			= 1'b1;
+			// pc_en_i			= 1'b1;
+
+			fifo_wr_en_i	= 1'b1;
+		end
+		
+
         END_ST:
             end_state	= 1'b1;
 
     endcase
 end
+
+
 
 // Regfile block.
 regfile_8p
@@ -263,13 +276,13 @@ regfile_8p
 
 // 18 + 32 * 7 = 242
 assign cfg_data = 	{	oper_i     , // [28:11]
-						reg_dout6_i,
-						reg_dout5_i,
-						reg_dout4_i,
-						reg_dout3_i,
+						reg_dout0_i,
+						reg_dout1_i,
 						reg_dout2_i,
-                        reg_dout1_i,
-						reg_dout0_i	
+						reg_dout3_i,
+						reg_dout4_i,
+						reg_dout5_i,
+						reg_dout6_i						
                     };
 
 
@@ -294,7 +307,12 @@ assign reg_din7_i = imm_i;
 
 assign cfg_valid	= cfg_valid_i;
 
-// assign start = pc_rst_i;
+
+// reg_dout0_i: ftm addr.
+// reg_dout1_i: ftm loading config (n_wrap_c_acc: 7-bits, n_bursts: 18-bits, valid_bytes_in_last_burst: 7-bits).
+assign fifo_di    = {reg_dout0_i, reg_dout1_i}; 
+assign fifo_wr_en = fifo_wr_en_i;
+
 
 // Multiply address by 8 to convert from 8-bytes-addressing to byte-addressing.
 assign	pmem_addr = {pc_r[PMEM_N-4:0], 3'b000};

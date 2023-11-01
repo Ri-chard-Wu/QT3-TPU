@@ -209,24 +209,24 @@ module qt3_tpu_v1
 	localparam BYTES_PER_BURST			= (BURST_LENGTH + 1) * BYTES_PER_AXI_TRANSFER; // 16 * 8 = 128 bytes.
 
 
-
-
 	wire   [N_CONV_UNIT-1:0] wb_we    ;
 	wire   [N_CONV_UNIT-1:0] wb_clr   ;
 	wire   [N_CONV_UNIT-1:0] wb_empty ;
+	wire   [31:0]		     wb_cfg   ;
 	wire   [N_CONV_UNIT-1:0] fb_we    ;
 	wire   [N_CONV_UNIT-1:0] fb_clr   ;
 	wire   [N_CONV_UNIT-1:0] fb_empty ;
+	wire   [31:0]		     fb_cfg   ;
 	wire   [DATA_WIDTH-1:0]  mem_di   ;
 
-	wire   [N_CONV_UNIT-1:0] wb_sufficient       ;
-	wire   [N_CONV_UNIT-1:0] wb_sufficient_reduc ;
+	wire   [N_CONV_UNIT-1:0] wb_suff       ;
+	wire   [N_CONV_UNIT-1:0] wb_suff_reduc ;
 	wire   [N_CONV_UNIT-1:0] wb_full             ;           
-	wire   [N_CONV_UNIT-1:0] fb_sufficient       ; 
+	wire   [N_CONV_UNIT-1:0] fb_suff       ; 
 	wire   [N_CONV_UNIT-1:0] fb_full             ;         
-	wire 				     wb_sufficient_i ;
+	wire 				     wb_suff_i ;
 	wire 				     wb_full_i       ;              
-	wire 				     fb_sufficient_i ; 
+	wire 				     fb_suff_i ; 
 	wire 				     fb_full_i       ;         
 	
 
@@ -235,8 +235,8 @@ module qt3_tpu_v1
 	wire          cfg_valid_i ;
 	wire 		  cfg_ready_i ;
 
-	wire [63:0]   conv_para   ;
-	wire 		  conv_para_we;
+	// wire [63:0]   conv_para   ;
+	// wire 		  conv_para_we;
 
 	wire [31:0]   out_shape   ;
 	wire [31:0]   out_addr    ;
@@ -259,6 +259,17 @@ module qt3_tpu_v1
 
 
 
+	wire 		fifo_ftm_full ;
+	wire 		fifo_ftm_wr_en;
+	wire [63:0] fifo_ftm_di	  ;
+	
+	wire 		fifo_ftm_empty;
+	wire 		fifo_ftm_rd_en;
+	wire [63:0] fifo_ftm_dout ;
+	
+	
+
+
 	ctrl #(
 			.PMEM_N  (PMEM_N         ),
 			.FW      (FW)
@@ -273,10 +284,13 @@ module qt3_tpu_v1
 
 			.START_REG      (START_REG      ),
 
+			.fifo_full  	(fifo_ftm_full  ),
+			.fifo_wr_en	    (fifo_ftm_wr_en ),
+			.fifo_di	    (fifo_ftm_di    ),
 
-			.cfg_valid     (cfg_valid_i     ),
-			.cfg_data      (cfg_data_i      ),
-			.cfg_ready     (cfg_ready_i     )
+			.cfg_valid      (cfg_valid_i     ),
+			.cfg_data       (cfg_data_i      ),
+			.cfg_ready      (cfg_ready_i     )
 		);
 
 
@@ -285,7 +299,7 @@ module qt3_tpu_v1
 	fifo
 		#(
 			// Data width.
-			.B	(FW	),
+			.B	(64	),
 			
 			// Fifo depth.
 			.N	(16	)
@@ -295,17 +309,14 @@ module qt3_tpu_v1
 			.clk	(aclk		),
 			.rstn 	(aresetn	),
 	
+			.full   (fifo_ftm_full  ),
 			.wr_en 	(fifo_ftm_wr_en	),
 			.din    (fifo_ftm_di	),
 
+			.empty  (fifo_ftm_empty	),
 			.rd_en  (fifo_ftm_rd_en	),
-			.dout   (fifo_ftm_dout	),
-
-			.full   (fifo_ftm_full  ),
-			.empty  (fifo_ftm_empty	)
+			.dout   (fifo_ftm_dout	)
 		);
-
-
 
 
 	ddr_reader
@@ -324,7 +335,11 @@ module qt3_tpu_v1
 			.cfg_valid     (cfg_valid_i     ),
 			.cfg_data      (cfg_data_i      ),
 			.cfg_ready     (cfg_ready_i     ),
-
+			
+			.fifo_empty    (fifo_ftm_empty  ),
+			.fifo_rd_en    (fifo_ftm_rd_en  ),
+			.fifo_dout     (fifo_ftm_dout   ),
+			
 			// ddr controls.
 			.RSTART_REG     (RSTART_REG  	),
 			.RADDR_REG      (RADDR_REG   	),
@@ -340,25 +355,20 @@ module qt3_tpu_v1
 			.wb_we    	    (wb_we    		),
 			.wb_clr   	    (wb_clr   		),
 			.wb_empty 	    (wb_empty 		),
+			.wb_suff 	    (wb_suff_i      ),
+			.wb_full        (wb_full_i      ),	
+			.wb_cfg         (wb_cfg		    ),		
 			.fb_we    	    (fb_we    		),
 			.fb_clr   	    (fb_clr   		),
 			.fb_empty 	    (fb_empty 		),
-			.mem_di 		(mem_di         ),
+			.fb_suff 		(               ), // not needed?
+			.fb_full        (fb_full_i      ),
+			.fb_cfg         (fb_cfg		    ),			
+			.mem_di 		(mem_di         ), 
 
-			.conv_para    	(conv_para      ),     
-			.conv_para_we 	(conv_para_we   ),    
 
-			// feedbacks from buffers.
-			.wb_sufficient  (wb_sufficient_i),
-			.wb_full        (wb_full_i      ),
-			.fb_sufficient  (               ), // not needed?
-			.fb_full        (fb_full_i      )
 
 		);
-
-
-
-
 
 
 
@@ -388,26 +398,27 @@ genvar i;
         		.pipe_en_i  	(pipe_en_i[i]  ),
         		.pipe_en_o  	(pipe_en_o[i]  ),
 
-				.para           (conv_para      ),
-				.para_we        (conv_para_we   ),
+				// .para           (conv_para      ),
+				// .para_we        (conv_para_we   ),
 
 
 				// TODO: implement full logic. Need to first figure 
 					// out how to read from strided buffer in each conv_unit.
-
-				.wb_sufficient  (wb_sufficient[i]  ),
-				.wb_full        (wb_full      [i]  ),
-				.fb_sufficient  (fb_sufficient[i]  ), // not needed?
-				.fb_full        (fb_full      [i]  ),
 
 				// TODO: implement clr logic to clear regs in 
 					// all conv_unit to be ready for next layer.
 				.wb_we          (wb_we[i]         ),
 				.wb_clr         (wb_clr[i]        ),
 				.wb_empty       (wb_empty[i]      ),
+				.wb_suff 		(wb_suff[i]  	  ),
+				.wb_full        (wb_full[i] 	  ),
+				.wb_cfg         (wb_cfg		      ),						
 				.fb_we          (fb_we[i]         ),
 				.fb_clr         (fb_clr[i]        ),
 				.fb_empty       (fb_empty[i]      ),
+				.fb_suff  		(fb_suff[i]       ), // not needed?
+				.fb_full        (fb_full[i] 	  ),
+				.fb_cfg         (fb_cfg		      ),						
 				.di             (mem_di           ),
 
 				.acc_i  		(acc_i[i]   	  ),
@@ -416,20 +427,26 @@ genvar i;
 			);
 		
 		// Only look at tail: if tail is sufficient, then all others are sufficient.
-		assign wb_sufficient_reduc[i] = (is_tail[i]) ? wb_sufficient[i] : 0;
+		assign wb_suff_reduc[i] = (is_tail[i]) ? wb_suff[i] : 0;
 
 		assign pipe_en_i[i] = (i==0) ? 0 	     : pipe_en_o[i-1];
         assign acc_i[i] 	= (i==0) ? 0 	     : acc_o[i-1];
 	end
 endgenerate 
 
-assign wb_sufficient_i = (wb_sufficient_reduc > 0) ? 1'b1 : 1'b0;
+assign wb_suff_i = (wb_suff_reduc > 0) ? 1'b1 : 1'b0;
 
 assign wb_full_i = |wb_full;
 assign fb_full_i = |fb_full;
 
 
+// TODO: allow using different shapes in writer and 
+	// reader of strided buffer to facilitate pre-load next layer.
+// ftm_n_wrap_c_acc	== fifo_ftm_dout[57+:7].
+// assign conv_para 	 = {fifo_ftm_dout[57+:7], cfg_data[114+:64]};
+// assign conv_para_we  = fifo_ftm_rd_en | (cfg_valid & cfg_ready);
 
+ 
 
 // TODO: write output data directly back to fb BRAM until fb BRAM run out of space.
 activation_unit #(
@@ -483,10 +500,8 @@ ddr_writer
 		.m_axis_tready	(s_axis_tready )
     );
 
-assign out_addr  = cfg_data_i[223:192];
-assign out_shape = cfg_data_i[:]; 
-
-
+assign out_addr 		 = cfg_data[178+:32];
+assign out_shape 		 = cfg_data[210+:32];
 
 
 

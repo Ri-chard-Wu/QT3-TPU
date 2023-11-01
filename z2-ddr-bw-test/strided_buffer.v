@@ -4,7 +4,7 @@ module strided_buffer
         // parameter N_DSP = 3,
         
         parameter B_BUF_ADDR = 9,
-        parameter B_SHAPE = 32,
+        parameter B_SHAPE = 25,
         parameter B_COORD = 8,
         parameter DATA_WIDTH = 64,
         
@@ -12,10 +12,9 @@ module strided_buffer
     (
         input wire                  clk     ,    
         input wire                  rstn    , 
-        
-           
-
+    
         input wire  [B_SHAPE-1:0]  shape,
+        // input wire  [6:0]          n_wrap_c_acc,
 
         input wire                          clr,
         input wire                          we ,
@@ -56,7 +55,7 @@ wire [B_COORD-1:0] x_wr_next;
 
 wire [7:0] n_wrap_c;
 
-wire [15:0] c_i;
+// wire [15:0] c_i;
 wire [B_COORD-1:0] h_i;
 wire [B_COORD-1:0] w_i;
 
@@ -107,6 +106,9 @@ begin
             for (i=0; i<N_BUF_X; i=i+1) wraddr[i] <= 0;
         end
         else if (we_r) begin
+            
+            // TODO: be able to handle cases where c1 is not power of 2 (e.g. input img).
+
             // c
             if(c_wr_next == n_wrap_c) begin
                 c_wr_r <= 0;
@@ -141,11 +143,17 @@ assign x_wr_next = x_wr_r + 1;
 assign y_wr_next = y_wr_r + 1;
 assign c_wr_next = c_wr_r + 1;
 
-assign c_i = shape[31:20];
-assign h_i = shape[19:10];
-assign w_i = shape[9:0]  ;
+assign w_i      = shape[0+:9] ;
+assign h_i      = shape[9+:9] ;
+assign n_wrap_c = shape[18+:7];
 
-assign n_wrap_c = (c_i >> ($clog2(N_CONV_UNIT >> 2))); 
+
+
+// assign ftm_shape[0+:9]         = fb_cfg[0+:9] ; // w
+// assign ftm_shape[9+:9]         = fb_cfg[9+:9] ; // h
+// assign ftm_shape[18+:7]        = fb_cfg[18+:7]; // n_wrap_c
+
+// assign n_wrap_c = (c_i >> ($clog2(N_CONV_UNIT >> 2))); 
 
 
 // strided write.

@@ -14,7 +14,7 @@ module conv_unit
         parameter B_INST = 32,
 
         parameter B_PARA = 64,
-        parameter B_SHAPE = 32,
+        parameter B_SHAPE = 25,
         
         parameter N_FTMBUF_X = 5,
         parameter N_WEIBUF_X = 1,
@@ -38,23 +38,22 @@ module conv_unit
         input wire                     clk    ,    
         input wire                     rstn    ,     
         
-        input wire [B_PARA-1:0]       para    ,
-        input wire                    para_we ,
-
-        output wire fb_sufficient              ,
-        output wire fb_full                    ,
-        output wire wb_sufficient              ,
-        output wire wb_full                    ,
-            
-
-        input wire                   fb_we    ,
-        input wire                   fb_clr   ,
-        output wire                  fb_empty ,
+        // input wire [B_PARA-1:0]       para    ,
+        // input wire                    para_we ,
 
         input wire                   wb_we    ,
         input wire                   wb_clr   ,
         output wire                  wb_empty ,
-        input wire [DATA_WIDTH-1:0]  di    ,
+        output wire                  wb_suff  ,
+        output wire                  wb_full  , 
+		input wire    [31:0]		 wb_cfg   , 
+        input wire                   fb_we    ,
+        input wire                   fb_clr   ,
+        output wire                  fb_empty ,
+        output wire                  fb_suff  ,
+        output wire                  fb_full  ,
+        input wire    [31:0]		 fb_cfg   , 
+        input wire [DATA_WIDTH-1:0]  di       ,
 
 
         input  wire [2*B_PIXEL*N_KERNEL-1:0] acc_i,
@@ -78,13 +77,13 @@ wire [N_KERNEL-1:0]         wb_we_i;
 localparam B_N_DSP_C = $clog2(N_CONV_UNIT << 2);
 wire [1:0]           wei_stride ;
 wire [1:0]           wei_pad    ;
-wire [31:0]          wei_shape  ;
+wire [24:0]          wei_shape  ;
 wire [11:0]          wei_c1;
 wire [B_N_DSP_C-1:0] wei_c1_mod;
 wire [B_N_DSP_C-1:0] wei_c1_mod_r;
 
 // fm shape (c: 12-bits, w: 10-bits, h: 10-bits).
-wire [31:0] ftm_shape  ;
+wire [24:0] ftm_shape  ;
 
 
 
@@ -117,7 +116,7 @@ wire [1:0] done_ld;
 wire [N_KERNEL:0] wb_tog;
 wire              fb_tog;
 
-reg [B_PARA-1:0] para_r;
+// reg [B_PARA-1:0] para_r;
 
 
 integer i;
@@ -127,7 +126,7 @@ begin
     if ( rstn == 1'b0 ) begin
 
         state	<= INIT_ST;
-        para_r  <= 0;
+        // para_r  <= 0;
 
         wb_we_sel    <= 0;
         wei_c1_mod_r <= 0;
@@ -135,8 +134,8 @@ begin
     end 
     else begin    
 
-        if(para_we) 
-            para_r <= para;
+        // if(para_we) 
+        //     para_r <= para;
 
         wei_c1_mod_r <= wei_c1_mod;
         is_tail_r    <= is_tail_i ;
@@ -241,40 +240,22 @@ generate
 endgenerate
 
 
+// weight shape (n_wrap_c: 7-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits).
+assign wei_stride              = wb_cfg[1:0] ;
+assign wei_pad                 = wb_cfg[3:2] ;
 
+assign wei_shape[0+:9]         = wb_cfg[5:4] ; // w
+assign wei_shape[9+:9]         = wb_cfg[7:6] ; // h
+assign wei_shape[18+:7]        = wb_cfg[8+:7]; // n_wrap_c
+assign wei_n_wrap_c_acc        = 0;
 
+// assign wei_c1 = wei_shape[31:20];
 
-// weight shape (c1: 12-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits).
-assign wei_stride = para_r[1:0] ;
-assign wei_pad    = para_r[3:2] ;
-
-assign wei_shape[9:0]        = para_r[5:4] ; // w
-assign wei_shape[19:10]      = para_r[7:6] ; // h
-assign wei_shape[31:20]      = para_r[19:8]; // c1
-assign wei_c1 = wei_shape[31:20];
-
-// fm shape (c: 12-bits, h: 10-bits, w: 10-bits).
-assign ftm_shape[9:0]        = para_r[9:0]  ;
-assign ftm_shape[19:10]      = para_r[19:10];
-assign ftm_shape[31:20]      = para_r[31:20];
-
-
-
-// // FSM outputs.
-// always @(state) begin
-
-//     init_state	        = 0;
-//     compute_state	    = 0;
-
-// 	case (state)
-
-// 		INIT_ST:
-// 			init_state       	= 1;
-
-//         COMPUTE_ST:
-//             compute_state       = 1;
-// 	endcase
-// end
+// [n_wrap_c_acc: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits].
+assign ftm_shape[0+:9]         = fb_cfg[0+:9] ; // w
+assign ftm_shape[9+:9]         = fb_cfg[9+:9] ; // h
+assign ftm_shape[18+:7]        = fb_cfg[18+:7]; // n_wrap_c
+assign ftm_n_wrap_c_acc        = fb_cfg[25+:7];
 
 
 assign rd_en = (pipe_en == 1'b1) ? (ID == 0) ? 1'b1 : pipe_en_i
@@ -325,7 +306,8 @@ strided_buffer
         .clk  (clk	)	    ,    
         .rstn (rstn)        ,     
 
-        .shape (ftm_shape),
+        .shape        (ftm_shape       ),
+        // .n_wrap_c_acc (ftm_n_wrap_c_acc),
 
         .clr(fb_clr),
         
@@ -346,7 +328,7 @@ strided_buffer
 
 
 
-assign fb_sufficient = fb_tog;
+assign fb_suff = fb_tog;
 
 // TODO: change to 10-to-1 mux.
 assign fb_do = (0 == fb_rd_sel) ? fb_do_raw[0*DATA_WIDTH+:DATA_WIDTH] :
@@ -432,7 +414,7 @@ genvar i, ii;
 	end
 endgenerate 
 
-assign wb_sufficient = wb_tog[N_KERNEL-1];
+assign wb_suff = wb_tog[N_KERNEL-1];
 
 
 // assign c_i[0] = cur_coord[0][0*B_COORD+:B_COORD];

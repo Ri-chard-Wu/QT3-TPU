@@ -11,39 +11,39 @@ module ddr_reader
         input wire                  clk     ,    
         input wire                  rstn    , 
 
+        input  wire                      cfg_valid,
+        input  wire [FW-1:0]             cfg_data ,
+        output wire 		             cfg_ready,
+
+		input  wire 					 fifo_empty,
+		output wire 					 fifo_rd_en,
+		input  wire [63:0]  			 fifo_dout ,
+		
         input  wire					 m_axis_tvalid,
         input  wire	[DATA_WIDTH-1:0] m_axis_tdata ,
         output wire					 m_axis_tready,
 
 
-        input wire                      wb_sufficient,
-        input wire    [N_CONV_UNIT-1:0] wb_full      ,          
-        input wire    [N_CONV_UNIT-1:0] fb_sufficient, // not needed?
-        input wire    [N_CONV_UNIT-1:0] fb_full      ,   
-
         output wire   [N_CONV_UNIT-1:0]  wb_we    ,
         output wire   [N_CONV_UNIT-1:0]  wb_clr   ,
         input  wire   [N_CONV_UNIT-1:0]  wb_empty ,
+        input wire                       wb_suff  ,
+        input wire    [N_CONV_UNIT-1:0]  wb_full  , 	
+		output wire    [31:0]		     wb_cfg   , 				
         output wire   [N_CONV_UNIT-1:0]  fb_we    ,
         output wire   [N_CONV_UNIT-1:0]  fb_clr   ,
         input  wire   [N_CONV_UNIT-1:0]  fb_empty ,
+        input wire    			         fb_suff, // not needed?
+        input wire    [N_CONV_UNIT-1:0]  fb_full  , 		
+		output wire    [31:0]		     fb_cfg   , 			
         output wire   [DATA_WIDTH-1:0]   mem_di   ,
 
-        output wire   [63:0]             conv_para   ,
-        output wire 		             conv_para_we,
-
-        input  wire                      cfg_valid,
-        input  wire [FW-1:0]             cfg_data ,
-        output wire 		             cfg_ready,
 
         input wire			             RSTART_REG	,
         input wire	[31:0]	             RADDR_REG	,
         input wire	[31:0]	             RNBURST_REG,
         input wire                       RDONE_REG   
-
-                        
     );
-
 
 
 reg  [3:0] wei_cu_sel;
@@ -69,20 +69,15 @@ reg ftm_incr_st;
 
 reg [3:0] state;
 
-wire [17:0] oper 		   	    ;
-
 wire [31:0] wei_addr 		    ;
 wire [6:0]  wei_n_last_burst    ;
 wire [24:0] wei_n_rema_bursts   ;
+wire [31:0] wei_ld_cfg 	  	    ;
 
 wire [31:0] ftm_addr 	  	    ;
 wire [6:0]  ftm_n_last_burst    ;
 wire [24:0] ftm_n_rema_bursts   ;
 
-
-// Assume c1 is divisible by N_CONV_UNIT in the case of c1 > N_CONV_UNIT.
-// assign c1 = conv_para[19:8];
-// assign id_last = (c1 > N_CONV_UNIT) ? N_CONV_UNIT - 1 : c1 - 1; 
 
 reg [31:0] wei_addr_r 		   ;
 reg [24:0] wei_n_rema_bursts_r ;
@@ -102,18 +97,15 @@ wire wb_done_i ;
 wire fb_done_i ;    
   
 
+assign wei_addr 		 = cfg_data[18+:32]; // $r0
+assign wei_ld_cfg        = cfg_data[50+:32]; // $r1
+assign wei_n_last_burst  = wei_ld_cfg[0+:7];  // number of valid bytes in last burst.
+assign wei_n_rema_bursts = wei_ld_cfg[7+:18]; // each burst is 128 bytes (16 * 64-bits).
 
-assign oper	             = cfg_data[28:11]; // 18-bits.
-
-assign wei_addr 		 = cfg_data[31:0];
-assign wei_n_last_burst  = cfg_data[38:32]; // number of valid bytes in last burst.
-assign wei_n_rema_bursts = cfg_data[63:39]; // each burst is 128 bytes (16 * 64-bits).
-
-assign ftm_addr 	  	 = cfg_data[95:64];
-assign ftm_n_last_burst  = cfg_data[102:96];
-assign ftm_n_rema_bursts = cfg_data[127:103];
-
-assign conv_para         = cfg_data_i[191:128];
+// n_wrap_c_acc: 7-bits, n_bursts: 18-bits, valid_bytes_in_last_burst: 7-bits
+assign ftm_n_last_burst  = fifo_dout[32+:7];
+assign ftm_n_rema_bursts = fifo_dout[39+:18];
+assign ftm_addr 	  	 = fifo_dout[0+:32];
 
 
 always @( posedge clk )
@@ -157,15 +149,21 @@ begin
 
 			WEI_LOAD_ST:
 				if (RDONE_REG) begin // When mst_read in END state.
-					if (wb_sufficient && ~fb_done_i) 
+					if (wb_suff && ~fb_done_i) 
 						if (~wei_pending_i)
-							state <= FTM_INIT_ST;
+							state <= FTM_FIFO_ST;
 					else if (wb_done_i)
 						if (~wei_pending_i)
 							state <= INIT_ST;
 					else
 						state <= WEI_INCR_ST;
 				end
+
+			FTM_FIFO_ST:
+				if (~fifo_empty)
+					state <= FTM_INIT_ST;
+				else
+					state <= WEI_INCR_ST;
 
 			FTM_INIT_ST:
 				state <= FTM_LOAD_ST;
@@ -176,9 +174,9 @@ begin
 
 			FTM_LOAD_ST:	
 				if (RDONE_REG) begin // When mst_read in END state.
-					if (fb_done_i && ~ftm_pending_i)
+					if (fb_done_i)
 						if (~ftm_pending_i)
-							state <= WEI_INCR_ST;
+							state <= FTM_FIFO_ST;
 					else
 						state <= FTM_INCR_ST;
 				end
@@ -392,6 +390,14 @@ genvar i;
 endgenerate 
 
 
-assign conv_para_we = cfg_valid & init_st;
+assign wb_cfg = cfg_data[82+:32]; // $r2// c1: 12-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits.
+
+// [n_wrap_c_acc: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits].
+assign fb_cfg = {fifo_dout[57+:7], cfg_data[114+:25]}; // $r3 
+
+
+// assign ftm_args 		 = cfg_data[146+:32]; // $r4
+// assign ftm_n_wrap_c_sum	 = ftm_args[0+:7];
+// assign ftm_n    		 = ftm_args[7+:4];
 
 endmodule

@@ -2,7 +2,7 @@ module strided_buffer_reader
     #(
         parameter N_BUF_X = 10, 
         parameter B_BUF_ADDR = 9,
-        parameter B_SHAPE = 32,
+        parameter B_SHAPE = 25,
         parameter B_COORD = 8,
         parameter DATA_WIDTH = 64,
         parameter N_CONV_UNIT = 8,
@@ -10,16 +10,16 @@ module strided_buffer_reader
          
     )
     (
-        input wire                  clk     ,    
-        input wire                  rstn    , 
+        input wire                           clk     ,    
+        input wire                           rstn    , 
 
-        input wire          [1:0]  stride,
-        input wire          [1:0]  pad ,
+        input wire          [1:0]            stride,
+        input wire          [1:0]            pad ,
 
-        input wire  [B_SHAPE-1:0]  wei_shape,
-        input wire  [B_SHAPE-1:0]  ftm_shape,
+        input wire  [B_SHAPE-1:0]            wei_shape,
+        input wire  [B_SHAPE-1:0]            ftm_shape,
 
-        input wire                  start,
+        input wire                           rd_en,
         output wire [B_BUF_ADDR*N_BUF_X-1:0] rd_addr,
         
         output wire   [3:0] rd_sel,
@@ -58,11 +58,11 @@ wire [B_BUF_ADDR-1:0] addr     ;
 
 wire [7:0] n_wrap_c;
 
-wire [15:0]        c_wei;
+// wire [15:0]        c_wei;
 wire [B_COORD-1:0] h_wei;
 wire [B_COORD-1:0] w_wei;
 
-wire [15:0]        c_ftm;
+// wire [15:0]        c_ftm;
 wire [B_COORD-1:0] h_ftm;
 wire [B_COORD-1:0] w_ftm;
 
@@ -99,19 +99,19 @@ begin
     end 
     else begin    
 
-		case(state)
+		// case(state)
 
-			INIT_ST:
-                if (start == 1'b1)
-                    state <= COMPUTE_ST;
+		// 	INIT_ST:
+        //         if (start == 1'b1)
+        //             state <= COMPUTE_ST;
 	
-            COMPUTE_ST:
-                if()
+        //     COMPUTE_ST:
+        //         if()
 
-		endcase	
+		// endcase	
 
 
-        if(compute_state == 1'b1) begin
+        if(rd_en == 1'b1) begin
             
             if(dc_r == dc_lim) begin
 
@@ -148,8 +148,7 @@ begin
                                 x_rem_base_r <= x_rem_base_next;
                                 x_quo_r      <= x_quo_base_next;
                                 x_rem_r      <= x_rem_base_next;  
-                            end
-            
+                            end 
                         end
                         else begin
                             y_r <= y_next;   
@@ -209,15 +208,15 @@ assign x_rem_base_next = (x_rem_base_r + stride > N_BUF_X-1)? N_BUF_X - (x_rem_b
 assign x_next = x_r + stride;
 assign y_next = y_r + stride;
 
-assign c_wei = wei_shape[31:20]; // 12-bits
-assign h_wei = wei_shape[19:10]; // 10-bits
-assign w_wei = wei_shape[9:0]  ; // 10-bits
+assign w_wei    = wei_shape[0+:9] ; // 9-bits
+assign h_wei    = wei_shape[9+:9] ; // 9-bits
+assign n_wrap_c = wei_shape[18+:7]; // 7-bits
 
-assign c_ftm = ftm_shape[31:20]; // 12-bits
-assign h_ftm = ftm_shape[19:10]; // 10-bits
-assign w_ftm = ftm_shape[9:0]  ; // 10-bits
+assign w_ftm = ftm_shape[0+:9] ; // 9-bits
+assign h_ftm = ftm_shape[9+:9] ; // 9-bits
+// assign c_ftm = ftm_shape[18+:7]; // 7-bits
 
-assign n_wrap_c = (c_wei >> $clog2(4*N_CONV_UNIT));
+// assign n_wrap_c = (c_wei >> $clog2(4*N_CONV_UNIT));
 
 assign dx_lim = w_wei - 1;
 assign dy_lim = h_wei - 1;
