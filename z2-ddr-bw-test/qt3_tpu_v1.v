@@ -225,19 +225,26 @@ module qt3_tpu_v1
 
 	wire   [N_CONV_UNIT-1:0] wb_suff       ;
 	wire   [N_CONV_UNIT-1:0] wb_suff_reduc ;
-	wire   [N_CONV_UNIT-1:0] wb_full             ;           
+	wire   [N_CONV_UNIT-1:0] wb_full       ;           
 	wire   [N_CONV_UNIT-1:0] fb_suff       ; 
-	wire   [N_CONV_UNIT-1:0] fb_full             ;         
+	wire   [N_CONV_UNIT-1:0] fb_full       ;         
 	wire 				     wb_suff_i ;
-	wire 				     wb_full_i       ;              
+	wire 				     wb_full_i ;   
+	wire 				     wb_empty_i;	           
 	wire 				     fb_suff_i ; 
-	wire 				     fb_full_i       ;         
-	
+	wire 				     fb_full_i ;    
+	wire 				     fb_empty_i;  	     
 
 
-	wire [FW-1:0] cfg_data_i  ;
-	wire          cfg_valid_i ;
-	wire 		  cfg_ready_i ;
+
+
+	wire [FW-1:0] cfg_i_data  ;
+	wire          cfg_i_valid ;
+	wire 		  cfg_i_ready ;
+
+	wire [64-1:0] cfg_o_data  ;
+	wire          cfg_o_valid ;
+	wire 		  cfg_o_ready ;
 
 	// wire [63:0]   conv_para   ;
 	// wire 		  conv_para_we;
@@ -292,9 +299,9 @@ module qt3_tpu_v1
 			.fifo_wr_en	    (fifo_ftm_wr_en ),
 			.fifo_di	    (fifo_ftm_di    ),
 
-			.cfg_valid      (cfg_valid_i     ),
-			.cfg_data       (cfg_data_i      ),
-			.cfg_ready      (cfg_ready_i     )
+			.cfg_valid      (cfg_i_valid     ),
+			.cfg_data       (cfg_i_data      ),
+			.cfg_ready      (cfg_i_ready     )
 		);
 
 
@@ -336,10 +343,14 @@ module qt3_tpu_v1
 			.rstn			(aresetn		),
 
 			// cfg from ctrl.
-			.cfg_valid     (cfg_valid_i     ),
-			.cfg_data      (cfg_data_i      ),
-			.cfg_ready     (cfg_ready_i     ),
-			
+			.cfg_i_valid     (cfg_i_valid     ),
+			.cfg_i_data      (cfg_i_data      ),
+			.cfg_i_ready     (cfg_i_ready     ),
+
+			.cfg_o_data      (cfg_o_data       ),
+			.cfg_o_valid     (cfg_o_valid      ),
+			.cfg_o_ready     (cfg_o_ready      ),
+
 			.fifo_empty    (fifo_ftm_empty  ),
 			.fifo_rd_en    (fifo_ftm_rd_en  ),
 			.fifo_dout     (fifo_ftm_dout   ),
@@ -358,20 +369,15 @@ module qt3_tpu_v1
 			// write buffers.
 			.wb_we    	    (wb_we    		),
 			.wb_clr   	    (wb_clr   		),
-			.wb_empty 	    (wb_empty 		),
 			.wb_suff 	    (wb_suff_i      ),
 			.wb_full        (wb_full_i      ),	
 			.wb_cfg         (wb_cfg		    ),		
 			.fb_we    	    (fb_we    		),
 			.fb_clr   	    (fb_clr   		),
-			.fb_empty 	    (fb_empty 		),
 			.fb_suff 		(               ), // not needed?
 			.fb_full        (fb_full_i      ),
 			.fb_cfg         (fb_cfg		    ),			
-			.mem_di 		(mem_di         ), 
-
-
-
+			.mem_di 		(mem_di         )
 		);
 
 
@@ -402,12 +408,9 @@ genvar i;
         		.pipe_en_i  	(pipe_en_i[i]  ),
         		.pipe_en_o  	(pipe_en_o[i]  ),
 
-				// .para           (conv_para      ),
-				// .para_we        (conv_para_we   ),
-
-
-				// TODO: implement full logic. Need to first figure 
-					// out how to read from strided buffer in each conv_unit.
+				.cfg_i_data     (cfg_o_data       ),
+				.cfg_i_valid    (cfg_o_valid      ),
+				.cfg_i_ready    (cfg_o_ready      ),
 
 				// TODO: implement clr logic to clear regs in 
 					// all conv_unit to be ready for next layer.
@@ -416,13 +419,13 @@ genvar i;
 				.wb_empty       (wb_empty[i]      ),
 				.wb_suff 		(wb_suff[i]  	  ),
 				.wb_full        (wb_full[i] 	  ),
-				.wb_cfg         (wb_cfg		      ),						
+				// .wb_cfg         (wb_cfg		      ),						
 				.fb_we          (fb_we[i]         ),
 				.fb_clr         (fb_clr[i]        ),
 				.fb_empty       (fb_empty[i]      ),
 				.fb_suff  		(fb_suff[i]       ), // not needed?
 				.fb_full        (fb_full[i] 	  ),
-				.fb_cfg         (fb_cfg		      ),						
+				// .fb_cfg         (fb_cfg		      ),						
 				.di             (mem_di           ),
 
 				.acc_i  		(acc_i[i]   	  ),
@@ -432,18 +435,21 @@ genvar i;
 		
 		// Only look at tail: if tail is sufficient, then all others are sufficient.
 		assign wb_suff_reduc[i] = (is_tail[i]) ? wb_suff[i] : 0;
+		assign fb_suff_reduc[i] = (is_tail[i]) ? fb_suff[i] : 0;
 
-		assign pipe_en_i[i] = (i==0) ? 0 	     : pipe_en_o[i-1];
+		assign pipe_en_i[i] = (i==0) ? pipe_en   : pipe_en_o[i-1];
         assign acc_i[i] 	= (i==0) ? 0 	     : acc_o[i-1];
 	end
 endgenerate 
 
 assign wb_suff_i = (wb_suff_reduc > 0) ? 1'b1 : 1'b0;
+assign fb_suff_i = (fb_suff_reduc > 0) ? 1'b1 : 1'b0;
 
 assign wb_full_i = |wb_full;
 assign fb_full_i = |fb_full;
 
-
+assign wb_empty_i = |wb_empty;
+assign fb_empty_i = |fb_empty;
 // TODO: allow using different shapes in writer and 
 	// reader of strided buffer to facilitate pre-load next layer.
 // ftm_n_wrap_c_acc	== fifo_ftm_dout[57+:7].
@@ -462,6 +468,8 @@ activation_unit #(
 		.clk		    (aclk			    ),
 		.rstn         	(aresetn	        ),
 
+		.pipe_en		(pipe_en			),
+
 		.type           (act_func           ),
 
 		.di             (acc_o		[N_CONV_UNIT-1]),
@@ -472,7 +480,7 @@ activation_unit #(
 	);
       
 
-assign act_func  = cfg_data_i[2:0];
+assign act_func  = cfg_i_data[2:0];
 
 
 
@@ -491,11 +499,15 @@ ddr_writer
         .clk    		(aclk			),
 		.rstn			(aresetn		),
 
+		.pipe_en		(pipe_en			),
+
 		.base_addr	 	(out_addr       ),
+		.shape			(out_shape      ),
 
 		// Input data.
-        .ddr_we         (act_do_vaild   ),
-        .ddr_di         (act_do         ),
+        .ddr_valid         (act_do_vaild   ),
+        .ddr_data          (act_do         ),
+		.ddr_ready         (          ),
 
 
 		// AXIS Slave.
@@ -507,6 +519,8 @@ ddr_writer
 assign out_addr 		 = cfg_data[178+:32];
 assign out_shape 		 = cfg_data[210+:32];
 
+
+assign pipe_en = s_axis_tready & (wb_suff_i) & (fb_suff_i);
 
 
 // unified_buffer #(

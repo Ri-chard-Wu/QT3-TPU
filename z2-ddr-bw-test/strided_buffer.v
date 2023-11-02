@@ -1,193 +1,167 @@
 module strided_buffer
     #(
         parameter N_BUF_X = 5, 
-        // parameter N_DSP = 3,
-        
         parameter B_BUF_ADDR = 9,
         parameter B_SHAPE = 25,
         parameter B_COORD = 8,
         parameter DATA_WIDTH = 64,
-
-		parameter UNIT_BURSTS = 32,  // need to be power of 2.
+        parameter N_CONV_UNIT = 8,
+		parameter UNIT_BURSTS = 32,  // need to be pow er of 2.
         
     )
     (
         input wire                  clk     ,    
         input wire                  rstn    , 
     
-        input wire  [B_SHAPE-1:0]  shape,
-        input wire  [6:0]          n_wrap_c_sum,
-
-        input wire                          clr,
-        input wire                          we ,
-        input wire [DATA_WIDTH-1:0]         di ,
+        // #####################
+        // # wr
+        // #####################
+        input wire  [B_SHAPE-1:0]     shape,
+        input wire  [6:0]             n_wrap_c_sum,
         
-        input wire [B_BUF_ADDR*N_BUF_X-1:0] rdaddr;
-        output wire [DATA_WIDTH*N_BUF_X-1:0] do   ,
+        input wire                    wr_en ,
+        input wire [DATA_WIDTH-1:0]   wr_di ,
+        output wire                   wr_last,
+        output wire                   wr_tog,
+        output wire [B_COORD-1:0]     wr_ptr,
+        output wire [B_BUF_ADDR-1:0]  wr_base,
 
-        output wire tog,
-        // output wire full,
+    
+        // #####################
+        // # rd
+        // #####################
+        input wire          [1:0]    stride,
+        input wire          [1:0]    pad ,
+        input wire  [B_SHAPE-1:0]    wei_shape,
+        input wire  [B_SHAPE-1:0]    ftm_shape,
 
-        output wire [B_BUF_ADDR-1:0]  wptr
+        input wire                   rd_en   ,
+        output wire [DATA_WIDTH-1:0] rd_do   ,        
+        output wire                  rd_last ,
+        output wire [B_COORD-1:0]    rd_ptr         ,
+        input  wire                  rd_base_incr_en,
+        output wire [B_BUF_ADDR-1:0] rd_base        
     );
 
-localparam N_BUF_ENTRIES = 512;
+    wire [N_BUF_X-1:0]    wr_sel ;
+    wire [DATA_WIDTH-1:0] wr_do  ;
+    wire [B_BUF_ADDR:0]   wr_addr;
+    wire [B_BUF_ADDR-1:0] wr_base;
+    wire [B_COORD-1:0]    wr_ptr ;
+
+    wire [B_BUF_ADDR*N_FTMBUF_X-1:0] rd_addr ;
+    wire [3:0]                       rd_sel;
 
 
-reg                  we_r;
-reg                  clr_r;
-reg                  tog_r;
-reg [DATA_WIDTH-1:0] di_r;
+    strided_buffer_writer
+        #(
+            .N_BUF_X    (N_BUF_X), 
+            .B_BUF_ADDR (B_BUF_ADDR),
+            .B_SHAPE    (B_SHAPE)  ,
+            .DATA_WIDTH (DATA_WIDTH),
+            .B_COORD    (B_COORD),
+            .N_CONV_UNIT(N_CONV_UNIT),
+            .UNIT_BURSTS(UNIT_BURSTS)
+        )
+        strided_buffer_writer_i
+        (
+            .clk  (clk	)	     ,    
+            .rstn (rstn)         ,     
 
-wire [N_BUF_X-1:0]    we_i;
-wire [B_BUF_ADDR:0] wraddr ;
+            .shape        (shape),
+            .n_wrap_c_sum (n_wrap_c_sum),
 
-reg  [B_COORD-1:0] c_r;
-reg  [B_COORD-1:0] y_r;
-reg  [B_COORD-1:0] x_r; // max is 80.
-wire [B_COORD-1:0] c_next;
-wire [B_COORD-1:0] y_next;
-wire [B_COORD-1:0] x_next;
-reg  [3:0]         x_quo_r  ;
-reg  [3:0]         x_rem_r  ;
-
-wire [B_COORD-1:0] h_i;
-wire [B_COORD-1:0] w_i;
-wire [6:0]         n_wrap_c;
-reg  [6:0]         n_wrap_c_acc_r;
-
-
-always @( posedge clk )
-begin
-    if (rstn == 1'b0) begin
-
-        we_r        <= 0;
-        clr_r       <= 0;
-        di_r        <= 0;
-
-        y_r      <= 0;
-        x_r      <= 0;
-        c_r      <= 0;
-
-        tog_r <= 0;
-                
-        x_quo_r <= 0;
-        x_rem_r <= 0;
-
-        n_wrap_c_acc_r <= 0;
-
-    end 
-    else begin    
-
-        di_r  <= di;
-        we_r  <= we;
-        clr_r <= clr;
+            .wr_di   (wr_di     ),
+            .wr_do   (wr_do     ),
+            .wr_en   (wr_en     ),
+            .wr_sel  (wr_sel    ), 
+            .wr_addr (wr_addr   ),
+            .wr_last (wr_last   ),
+            .wr_tog  (wr_tog    ),  // will toggle whenever one kernel is completly loaded.
+            .wr_base (wr_base     ),
+            .wr_ptr  (wr_ptr      )
+        );
 
 
-        // TODO: combine clr into rstn.
-        if (clr_r == 1'b1) begin
-        
-            we_r        <= 0;
-            clr_r       <= 0;
-            di_r        <= 0;
-
-            y_r      <= 0;
-            x_r      <= 0;
-            c_r      <= 0;
-
-            tog_r <= 0;
-
-            x_quo_r <= 0;
-            x_rem_r <= 0;      
-
-            n_wrap_c_acc_r <= 0;     
-                    
-        end
-        else if (we_r) begin
+    strided_buffer_reader
+        #(
+            .N_BUF_X    (N_BUF_X), 
+            .B_BUF_ADDR (B_BUF_ADDR),
+            .B_SHAPE    (B_SHAPE)  ,
+            .DATA_WIDTH (DATA_WIDTH),
+            .B_COORD    (B_COORD),
+            .N_CONV_UNIT(N_CONV_UNIT),
+            .UNIT_BURSTS(UNIT_BURSTS)
+        )
+        ftm_buffer_reader_i
+        (
+            .clk  (clk	)	     ,    
+            .rstn (rstn)         ,     
             
-            // TODO: be able to handle cases where c1 is not power of 2 (e.g. input img).
+            .stride(stride   )   ,
+            .pad   (pad      )   ,
 
-  
-            // c
-            if(c_next == n_wrap_c) begin
-                c_r <= 0;
-                // y
-                if(y_next == h_i) begin
-                    y_r <= 0;
-                    // x
-                    if(x_next == w_i) begin
-                        x_r <= 0;
+            .ftm_shape(ftm_shape),
+            .wei_shape(wei_shape),
 
-                        tog_r <= ~tog_r;
+            // TODO: fb_rd_addr and fb_rd_sel may not be synced, need add delay regs.
+            // TODO: rd_addr and rd_sel may not be synced, need add delay regs.
+            .rd_en    (rd_en       ),
+            .rd_addr  (rd_addr  ),        
+            .rd_sel   (rd_sel   ),
+            .rd_last  (rd_last ),
+            .rd_ptr           (rd_ptr             ), // the x-coordinate.
+            .rd_base_incr_en  (rd_base_incr_en    ),
+            .rd_base          (rd_base            )
+        );
 
-                        wptr_r <= wraddr[B_BUF_ADDR-1:0];
 
-                        n_wrap_c_acc_r <= n_wrap_c_acc_r + n_wrap_c;
+    // // TODO: change to 10-to-1 mux.
+    // assign rd_do = (0 == rd_sel) ? rd_do_mux[0*DATA_WIDTH+:DATA_WIDTH] :
+    //                (1 == rd_sel) ? rd_do_mux[1*DATA_WIDTH+:DATA_WIDTH] :
+    //                (2 == rd_sel) ? rd_do_mux[2*DATA_WIDTH+:DATA_WIDTH] :
+    //                (3 == rd_sel) ? rd_do_mux[3*DATA_WIDTH+:DATA_WIDTH] :
+    //                (4 == rd_sel) ? rd_do_mux[4*DATA_WIDTH+:DATA_WIDTH] : 0; // 0: for padding.
 
-                        x_quo_r <= 0;
-                        x_rem_r <= 0;
-                    end              
-                    else begin
-                        x_r <= x_next;
 
-                        if(x_rem_r == N_BUF_X - 1) begin
-                            x_rem_r <= 0;
-                            x_quo_r <= x_quo_r + 1;
-                        end
-                        else begin
-                            x_rem_r <= x_rem_r + 1;
-                            x_quo_r <= x_quo_r;
-                        end
-                    end
-                end              
-                else
-                    y_r <= y_next;
-            end
-            else
-                c_r <= c_next;
+    // not yet implemented.
+    mux
+        #(
+            .N    (N_BUF_X   ), // number of inputs to mux.
+            .B    (DATA_WIDTH)  // width of each input.
+        )
+        mux_i
+        (
+            .clk  (clk	)	     ,    
+            .rstn (rstn)         ,     
+
+            .di   (rd_do_mux),
+            .sel  (rd_sel   ),
+            .do   (rd_do    )
+        );
+
+
+    // strided write.
+    generate
+    genvar i;
+        for (i=0; i < N_BUF_X; i=i+1) begin : GEN_BUF
+
+            // wrapper for BRAM primitives.
+            bram_sdp bram_sdp_i
+                (
+                    .clk		(clk		                    ),
+                    .rstn       (rstn		                    ),
+
+                    .we         (wr_sel[i]                          ),
+                    .wraddr     (wr_addr[B_BUF_ADDR-1:0]         ),
+                    .di         (wr_do                           )
+
+                    .rdaddr     (rd_addr[i*B_BUF_ADDR+:B_BUF_ADDR] ),
+                    .do         (rd_do_mux[i*DATA_WIDTH+:DATA_WIDTH]   ),       
+                );
+
         end
-
-    end
-end    
-
-assign wraddr = n_wrap_c_sum * (y_r + h_i * x_quo_r) + n_wrap_c_acc_r + c_r + wptr_r;
-assign wptr = wraddr[B_BUF_ADDR-1:0];
-
-assign x_next = x_r + 1;
-assign y_next = y_r + 1;
-assign c_next = c_r + 1;
-
-assign w_i      = shape[0+:9] ;
-assign h_i      = shape[9+:9] ;
-assign n_wrap_c = shape[18+:7]; // n_wrap_c != n_wrap_c_sum.
-
-
-
-// strided write.
-generate
-genvar i;
-	for (i=0; i < N_BUF_X; i=i+1) begin : GEN_BUF
-
-        // wrapper for BRAM primitives.
-        bram_sdp bram_sdp_i
-        	(
-        		.clk		(clk		                    ),
-        		.rstn       (rstn		                    ),
-
-                .we         (we_i[i]                          ),
-                .wraddr     (wraddr[B_BUF_ADDR-1:0]         ),
-                .di         (di_r                           )
-
-                .rdaddr     (rdaddr[i*B_BUF_ADDR+:B_BUF_ADDR] ),
-                .do         (do[i*DATA_WIDTH+:DATA_WIDTH]   ),       
-        	);
-
-        assign we_i[i] = we_r & ((x_rem_r == i) ? 1'b1: 1'b0);
-
-    end
-endgenerate 
-
-assign tog = tog_r;
+    endgenerate 
 
 
 endmodule

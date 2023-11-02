@@ -41,497 +41,432 @@ module conv_unit
         input wire                     clk    ,    
         input wire                     rstn    ,     
         
-        // input wire [B_PARA-1:0]       para    ,
-        // input wire                    para_we ,
+        input  wire                  cfg_i_valid,
+        input  wire [63:0]           cfg_i_data ,
+        output wire 		         cfg_i_ready,
+
 
         input wire                   wb_we    ,
         input wire                   wb_clr   ,
         output wire                  wb_empty ,
         output wire                  wb_suff  ,
         output wire                  wb_full  , 
-		input wire    [31:0]		 wb_cfg   , 
+		// input wire    [31:0]		 wcfg   , 
         input wire                   fb_we    ,
         input wire                   fb_clr   ,
         output wire                  fb_empty ,
         output wire                  fb_suff  ,
         output wire                  fb_full  ,
-        input wire    [31:0]		 fb_cfg   , 
+        // input wire    [31:0]		 fcfg   , 
         input wire [DATA_WIDTH-1:0]  di       ,
 
 
         input  wire [2*B_PIXEL*N_KERNEL-1:0] acc_i,
         input  wire [2*B_PIXEL*N_KERNEL-1:0] acc_o,
-        output wire                          acc_o_valid,      
-
-        input wire [B_INST-1:0] inst_i,
-        input wire [B_INST-1:0] inst_o,
+        output wire                          acc_o_valid
  
     );
 
+    localparam N_BUF_ENTRIES = 512;
+
+    wire [N_DSP_GROUP-1:0] is_tail_i;
+    reg  [N_DSP_GROUP-1:0] is_tail_r;
+
+    reg  [$clog2(N_KERNEL)-1:0] wb_we_sel;
+    wire [N_KERNEL-1:0]         wb_we_i;
 
 
-wire [N_DSP_GROUP-1:0] is_tail_i;
-reg  [N_DSP_GROUP-1:0] is_tail_r;
+    // weight shape (c1: 12-bits, w: 2-bits, h: 2-bits, pad: 2-bits, stride: 2-bits).
+    localparam B_N_DSP_C = $clog2(N_CONV_UNIT << 2);
+    wire [1:0]           wcfg_stride ;
+    wire [1:0]           wcfg_pad    ;
+    wire [24:0]          wcfg_shape  ;
+    wire [11:0]          wcfg_c1;
+    wire [B_N_DSP_C-1:0] wcfg_c1_mod;
+    wire [B_N_DSP_C-1:0] wcfg_c1_mod_r;
 
-reg  [$clog2(N_KERNEL)-1:0] wb_we_sel;
-wire [N_KERNEL-1:0]         wb_we_i;
-
-
-// weight shape (c1: 12-bits, w: 2-bits, h: 2-bits, pad: 2-bits, stride: 2-bits).
-localparam B_N_DSP_C = $clog2(N_CONV_UNIT << 2);
-wire [1:0]           wei_stride ;
-wire [1:0]           wei_pad    ;
-wire [24:0]          wei_shape  ;
-wire [11:0]          wei_c1;
-wire [B_N_DSP_C-1:0] wei_c1_mod;
-wire [B_N_DSP_C-1:0] wei_c1_mod_r;
-
-// fm shape (c: 12-bits, w: 10-bits, h: 10-bits).
-wire [24:0] ftm_shape  ;
-
-
-
-
-wire [N_FTMBUF_X*DATA_WIDTH-1:0] fb_do_raw;
-wire [DATA_WIDTH-1:0]            fb_do;
-wire [3:0]                       fb_rd_sel;
-wire [B_PIXEL-1:0]               fb_do_la [0:N_DSP_GROUP-1];
-
-wire [DATA_WIDTH-1:0]            wb_do_i [0:N_KERNEL-1];
-wire [B_PIXEL*N_KERNEL-1:0]      wb_do [0:N_DSP_GROUP-1];
-wire [B_PIXEL*N_KERNEL-1:0]      wb_do_la [0:N_DSP_GROUP-1];
-
-wire [2*B_PIXEL*N_KERNEL-1:0] acc_i_arr [0:N_DSP_GROUP-1];
-wire [2*B_PIXEL*N_KERNEL-1:0] acc_o_arr [0:N_DSP_GROUP-1];
-
-wire [B_INST-1:0] inst_i_arr [0:N_DSP_GROUP-1];
-wire [B_INST-1:0] inst_o_arr [0:N_DSP_GROUP-1];
-
-
-wire [B_BUF_ADDR*N_FTMBUF_X-1:0] fb_rd_addr ;
-wire [B_BUF_ADDR-1:0]            wb_rd_addr [0:N_KERNEL-1];
-
-wire [B_COORD-1:0] c_i [0:1];
-wire [B_COORD-1:0] y_i [0:1];
-wire [B_COORD-1:0] x_i [0:1];
-wire [1:0] done_ld;
-
-wire [N_KERNEL:0] wb_tog;
-wire              fb_tog;
-
-// reg [B_PARA-1:0] para_r;
-
-
-integer i;
-
-always @( posedge clk )
-begin
-    if ( rstn == 1'b0 ) begin
-
-        state	<= INIT_ST;
-        // para_r  <= 0;
-
-        wb_we_sel    <= 0;
-        wei_c1_mod_r <= 0;
-        is_tail_r    <= 0;    
-    end 
-    else begin    
-
-        // if(para_we) 
-        //     para_r <= para;
-
-        wei_c1_mod_r <= wei_c1_mod;
-        is_tail_r    <= is_tail_i ;
-    end
-end    
+    // fm shape (c: 12-bits, w: 10-bits, h: 10-bits).
+    wire [24:0] fcfg_shape  ;
 
 
 
 
-generate
-    if (ID == 4*(N_CONV_UNIT-1)) begin
+    wire [N_FTMBUF_X*DATA_WIDTH-1:0] fb_do_raw;
+    wire [DATA_WIDTH-1:0]            fb_do;
+    wire [B_PIXEL-1:0]               fb_do_la [0:N_DSP_GROUP-1];
 
-        wire[7:0]                    n_wrap_c_lim;
-        reg [7:0]                    n_wrap_c_r;
-        reg [2*B_PIXEL*N_KERNEL-1:0] acc_r;
-        reg [2*B_PIXEL*N_KERNEL-1:0] acc_o_r;
-        reg [N_KERNEL-1:0]           acc_o_valid_r;
-        reg [2*B_PIXEL*N_KERNEL-1:0] acc_o_r_la;
-        reg [N_KERNEL-1:0]           acc_o_valid_r_la;
+    wire [DATA_WIDTH-1:0]            wb_do_i [0:N_KERNEL-1];
+    wire [B_PIXEL*N_KERNEL-1:0]      wb_do [0:N_DSP_GROUP-1];
+    wire [B_PIXEL*N_KERNEL-1:0]      wb_do_la [0:N_DSP_GROUP-1];
 
-        always @( posedge clk ) begin
+    wire [2*B_PIXEL*N_KERNEL-1:0] acc_i_arr [0:N_DSP_GROUP-1];
+    wire [2*B_PIXEL*N_KERNEL-1:0] acc_o_arr [0:N_DSP_GROUP-1];
 
-            if ( rstn == 1'b0 ) begin
-                n_wrap_c_r       <= 0;
-                acc_r            <= 0;
-                acc_o_r          <= 0;    
-                acc_o_valid_r    <= 0;    
-                acc_o_r_la       <= 0;    
-                acc_o_valid_r_la <= 0;                  
-            end 
-            else begin    
 
-                if(pipe_en_o == 1'b1) begin
+    wire [B_COORD-1:0] c_i [0:1];
+    wire [B_COORD-1:0] y_i [0:1];
+    wire [B_COORD-1:0] x_i [0:1];
+    wire [1:0] done_ld;
+
+    wire [N_KERNEL:0] wb_tog;
+
+    // reg [B_PARA-1:0] para_r;
+
+
+    integer i;
+
+    always @( posedge clk )
+    begin
+        if ( rstn == 1'b0 ) begin
+
+            state	<= INIT_ST;
+            // para_r  <= 0;
+
+            wb_we_sel    <= 0;
+            wcfg_c1_mod_r <= 0;
+            is_tail_r    <= 0;    
+        end 
+        else begin    
+
+            // if(para_we) 
+            //     para_r <= para;
+
+            wcfg_c1_mod_r <= wcfg_c1_mod;
+            is_tail_r    <= is_tail_i ;
+
+
+            for (i=0; i<2; i=i+1) 
+                if (cfg_i_valid[i]) begin
                     
-                    for (i=0; i<N_KERNEL; i=i+1) begin
+                    cfg_data_r [i] <= cfg_i_data;
+                    cfg_i_ready[i] <= 1'b0; 
+                end
+                    
 
-                        if(n_wrap_c_r[i] == n_wrap_c_lim)begin
+
+            if (wb_wr_last[N_KERNEL-1]) begin
+                if (wr_c2_cnt_r == wcfg_n_wrap_c2[0]) begin
+                    
+                    // Can update wr's cfg, since all wr-related activitis for this layer are done.
+                    cfg_i_ready[0] <= 1'b1; 
+                    wr_c2_cnt_r    <= 0;
+                end
+                else
+                    wr_c2_cnt_r <= wr_c2_cnt_r + 1;
+            end
+
+
+            if (fb_rd_last) begin
+                if (rd_c2_cnt_r == wcfg_n_wrap_c2[1]) begin
+                    
+                    // cfg_i_ready[0] <= 1'b1; // can begin loading next layer's ftm.
+
+                    // Can update rd's cfg, since all rd-related activitis for this layer are done.
+                    // Can begin loading next layer's ftm.
+                    cfg_i_ready[1] <= 1'b1; 
+
+                    rd_c2_cnt_r    <= 0;
+                end
+                else
+                    rd_c2_cnt_r <= rd_c2_cnt_r + 1;
+            end
+
+        end
+    end    
+
+
+
+
+    generate
+        if (ID == 4*(N_CONV_UNIT-1)) begin
+
+            wire[7:0]                    n_wrap_c_lim;
+            reg [7:0]                    n_wrap_c_r;
+            reg [2*B_PIXEL*N_KERNEL-1:0] acc_r;
+            reg [2*B_PIXEL*N_KERNEL-1:0] acc_o_r;
+            reg                          acc_o_valid_r;
+
+            always @( posedge clk ) begin
+
+                if ( rstn == 1'b0 ) begin
+                    n_wrap_c_r       <= 0;
+                    acc_r            <= 0;
+                    acc_o_r          <= 0;    
+                    acc_o_valid_r    <= 0;    
+                end 
+                else begin    
+
+                    if(pipe_en_o == 1'b1) begin
+
+                        // Assume c1 is always == k * 4 * N_CONV_UNIT for k >= 1. Need to make it more general.
+                        if(n_wrap_c_r == n_wrap_c_lim)begin
                         
-                            n_wrap_c_r                      <= 0;
-                            acc_r                           <= 0;
-                            acc_o_valid_r[i]                <= 1'b1;
-                            acc_o_r[i*2*B_PIXEL+:2*B_PIXEL] <=  acc_r[i*2*B_PIXEL+:2*B_PIXEL] +
-                                                            acc_o_arr[N_DSP_GROUP-1][i*2*B_PIXEL+:2*B_PIXEL];
+                            n_wrap_c_r    <= 0;
+                            acc_o_valid_r <= 1'b1;
+
+                            for (i=0; i<N_KERNEL; i=i+1) begin
+
+                                acc_r                           <= 0;
+                                acc_o_r[i*2*B_PIXEL+:2*B_PIXEL] <=  acc_r[i*2*B_PIXEL+:2*B_PIXEL] +
+                                                                acc_o_arr[N_DSP_GROUP-1][i*2*B_PIXEL+:2*B_PIXEL];
+                            end
                         end                    
                         else begin
-
-                            n_wrap_c_r                    <= n_wrap_c_r + 1;
-                            acc_o_valid_r[i]              <= 1'b0;
-                            acc_r[i*2*B_PIXEL+:2*B_PIXEL] <= acc_r[i*2*B_PIXEL+:2*B_PIXEL] + 
-                                                            acc_o_arr[N_DSP_GROUP-1][i*2*B_PIXEL+:2*B_PIXEL];
+                            
+                            n_wrap_c_r    <= n_wrap_c_r + 1;
+                            acc_o_valid_r <= 1'b0;
+                            
+                            for (i=0; i<N_KERNEL; i=i+1) begin
+                                acc_r[i*2*B_PIXEL+:2*B_PIXEL] <= acc_r[i*2*B_PIXEL+:2*B_PIXEL] + 
+                                                                acc_o_arr[N_DSP_GROUP-1][i*2*B_PIXEL+:2*B_PIXEL];
+                            end
                         end
                     end
+
                 end
-            end
-        end     
+            end     
 
-        assign n_wrap_c_lim = (wei_c1 >> $clog2(4*N_CONV_UNIT));
+            assign n_wrap_c_lim = (wcfg_c1 >> $clog2(4*N_CONV_UNIT));
 
+            assign acc_o       = acc_o_r;
+            assign acc_o_valid = acc_o_valid_r; 
 
-        generate
-        genvar k;
-
-            for (k=0; k < N_KERNEL; k=k+1) begin
-
-                latency_reg
-                    #(
-                        .N(k), 
-                        .B(2*B_PIXEL)
-                    )
-                    acc_o_latency_reg_i
-                    (
-                        .clk	(clk			),
-                        .rstn	(rstn			),
-                        .din	(acc_o_r   [k*2*B_PIXEL+:2*B_PIXEL]),
-                        .dout	(acc_o_r_la[k*2*B_PIXEL+:2*B_PIXEL])
-                    );
-
-                latency_reg
-                    #(
-                        .N(k), 
-                        .B(1)
-                    )
-                    acc_o_latency_reg_i
-                    (
-                        .clk	(clk			    ),
-                        .rstn	(rstn			    ),
-                        .din	(acc_o_valid_r   [k]),
-                        .dout	(acc_o_valid_r_la[k])
-                    );
-
-            end
-        endgenerate 
-
-        assign acc_o       = acc_o_r_la;
-        assign acc_o_valid = acc_o_valid_r_la[0]; 
-
-    end
-    else begin
-        assign acc_o       = acc_o_arr[N_DSP_GROUP-1];
-        assign acc_o_valid = 1'b0;
-    end
-endgenerate
-
-
-// weight shape (n_wrap_c: 7-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits).
-assign wei_stride              = wb_cfg[1:0] ;
-assign wei_pad                 = wb_cfg[3:2] ;
-
-assign wei_shape[0+:9]         = wb_cfg[5:4] ; // w
-assign wei_shape[9+:9]         = wb_cfg[7:6] ; // h
-assign wei_shape[18+:7]        = wb_cfg[8+:7]; // n_wrap_c
-assign wei_n_wrap_c_sum        = wb_cfg[8+:7]; // n_wrap_c
-
-// assign wei_c1 = wei_shape[31:20];
-
-// [n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits].
-assign ftm_shape[0+:9]         = fb_cfg[0+:9] ; // w
-assign ftm_shape[9+:9]         = fb_cfg[9+:9] ; // h
-assign ftm_shape[18+:7]        = fb_cfg[25+:7]; // n_wrap_c (of each particular ftm).
-assign ftm_n_wrap_c_sum        = fb_cfg[18+:7]; // n_wrap_c_sum
-
-
-assign rd_en = (pipe_en == 1'b1) ? (ID == 0) ? 1'b1 : pipe_en_i
-                                 : 1'b0;
-
-// TODO: modify ftm_buffer_reader for new scheme: only read from 1 BRAM out of 10, instead of 3 form 5.
-strided_buffer_reader
-    #(
-        .N_BUF_X    (N_FTMBUF_X), 
-        .B_BUF_ADDR (B_BUF_ADDR),
-        .B_SHAPE   (B_SHAPE)  ,
-        .DATA_WIDTH (DATA_WIDTH),
-        .B_COORD    (B_COORD),
-        .N_CONV_UNIT(N_CONV_UNIT),
-        .UNIT_BURSTS(UNIT_BURSTS_FTM)
-    )
-    ftm_buffer_reader_i
-    (
-        .clk  (clk	)	     ,    
-        .rstn (rstn)         ,     
-        
-        .stride(wei_stride)   ,
-        .pad   (wei_pad   )   ,
-
-        .ftm_shape(ftm_shape),
-        .wei_shape(wei_shape),
-
-        .rd_en   (rd_en)         , // == 0 when pipeline halts.
-
-        // TODO: fb_rd_addr and fb_rd_sel may not be synced, need add delay regs.
-        .rd_addr  (fb_rd_addr)     ,        
-        .rd_sel  (fb_rd_sel)     ,
-
-        // output x, y coord to read, so we know whether to pad or not.
-        // .tog      ( ),
-
-        .is_last  (ftm_is_last ),
-
-        .rptr_incr_en  (0),
-        .rptr          ()
-    );
-
-
-strided_buffer
-    #(
-        .N_BUF_X    (N_FTMBUF_X), 
-        .B_BUF_ADDR (B_BUF_ADDR),
-        .B_SHAPE   (B_SHAPE)  ,
-        .DATA_WIDTH (DATA_WIDTH),
-        .B_COORD    (B_COORD),
-        .UNIT_BURSTS(UNIT_BURSTS_WEI)
-    )
-    ftm_buffer
-    (
-        .clk  (clk	)	    ,    
-        .rstn (rstn)        ,     
-
-        .shape        (ftm_shape       ),
-        .n_wrap_c_sum (ftm_n_wrap_c_sum),
-
-        .clr(fb_clr),
-        
-        .we(fb_we),
-        .di(di),
-        
-        .rdaddr(fb_rd_addr),
-        .do    (fb_do_raw), 
-        
-
-        .fb_wptr  (fb_wptr),
-        .tog      (fb_tog ),
-        // .full     (fb_full),
-        .wptr     ()
-    );
-
-
-
-
-assign fb_suff = fb_tog;
-
-// TODO: change to 10-to-1 mux.
-assign fb_do = (0 == fb_rd_sel) ? fb_do_raw[0*DATA_WIDTH+:DATA_WIDTH] :
-               (1 == fb_rd_sel) ? fb_do_raw[1*DATA_WIDTH+:DATA_WIDTH] :
-               (2 == fb_rd_sel) ? fb_do_raw[2*DATA_WIDTH+:DATA_WIDTH] :
-               (3 == fb_rd_sel) ? fb_do_raw[3*DATA_WIDTH+:DATA_WIDTH] :
-               (4 == fb_rd_sel) ? fb_do_raw[4*DATA_WIDTH+:DATA_WIDTH] : 0; // 0: for padding.
-
-
-wire [N_KERNEL-1:0] wb_full_i;
-
-generate
-genvar i, ii;
-
-	for (i=0; i < N_KERNEL; i=i+1) begin
-
-        strided_buffer_reader
-            #(
-                .N_BUF_X    (N_WEIBUF_X), 
-                .B_BUF_ADDR (B_BUF_ADDR),
-                .B_SHAPE   (B_SHAPE)  ,
-                .DATA_WIDTH (DATA_WIDTH),
-                .B_COORD    (B_COORD),
-                .N_CONV_UNIT(N_CONV_UNIT)
-            )
-            wei_buffer_reader_i
-            (
-                .clk  (clk	)	    ,    
-                .rstn (rstn)         ,     
-
-                .stride(1   )   ,
-                .pad   (0   )   ,
-
-                .ftm_shape(wei_shape), // yes, wei_shape.
-                .wei_shape(wei_shape),
-
-                .rd_en   (rd_en)    ,  // == 0 when pipeline halts.
-                
-                .rd_addr  (wb_rd_addr[i]),
-                .rd_sel(),
-
-                // .tog     (),
-                .is_last      (),
-
-                .rptr_incr_en (ftm_is_last),
-                .rptr         (wb_rptr[i])
-            );
-
-
-
-
-        strided_buffer
-            #(
-                .N_BUF_X    (N_WEIBUF_X), 
-                .B_BUF_ADDR (B_BUF_ADDR),
-                .B_SHAPE   (B_SHAPE)  ,
-                .DATA_WIDTH (DATA_WIDTH),
-                .B_COORD    (B_COORD)
-            )
-            wei_buffer
-            (
-                .clk  (clk	)	    ,    
-                .rstn (rstn)         ,     
-
-                .shape        (wei_shape),
-                .n_wrap_c_sum (wei_n_wrap_c_sum ),
-
-                .clr(wb_clr[i]),
-                
-                .we    (wb_we_i[i])              ,
-                .di    (di)                 ,
-                
-                .rdaddr(wb_rd_addr[i])         ,
-                .do    (wb_do_i[i])  ,
-
-                .tog (wb_tog[i]),     // will toggle whenever one kernel is completly loaded.
-                 
-                // .full     (wb_full   ),
-                .wptr     (wb_wptr[i])                   
-            );
-
-        assign wb_we_i[i] = (i == 0) ? (wb_tog[0] == wb_tog[N_KERNEL-1]) ? wb_we : 1'b0 :
-                                       (wb_tog[i-1] ^ wb_tog[i])         ? wb_we : 1'b0;
-
-        for (ii=0; ii < N_DSP_GROUP; ii=ii+1) begin
-
-            assign wb_do[ii][i*B_PIXEL+:B_PIXEL] = wb_do_i[i][ii*B_PIXEL+:B_PIXEL];
         end
-      
+        else begin
+            assign acc_o       = acc_o_arr[N_DSP_GROUP-1];
+            assign acc_o_valid = 1'b0;
+        end
+    endgenerate
 
-        assign wb_full_i[i] = (wb_wptr[i] > wb_rptr[i]) ? 
-                (N_BUF_ENTRIES + wb_rptr[i] - wb_wptr[i] < UNIT_BURSTS) ? 1'b1: 1'b0 : // wraddr > rdaddr
-                (                wb_rptr[i] - wb_wptr[i] < UNIT_BURSTS) ? 1'b1: 1'b0 ; // wraddr <= rdaddr
-
-	end
-endgenerate 
-
-
-assign wb_full = |wb_full_i;
-
-assign wb_suff = wb_tog[N_KERNEL-1];
+    assign rd_en = (pipe_en == 1'b1) ? (ID == 0) ? 1'b1 : pipe_en_i
+                                    : 1'b0;
 
 
+    generate
+    genvar k;
 
-latency_reg
-    #(
-        .N(N_DSP_GROUP + 3 + 1), // latency. 3(?): DSP's latency. 1(?): buffer read latency.
-        .B(1)
-    )
-    pipe_en_latency_reg_i
-    (
-        .clk	(clk			),
-        .rstn	(rstn			),
+        for (k=0; k < 2; k=k+1) begin
 
-        .din	(pipe_en_i),
-        .dout	(pipe_en_o)
-    );
+            assign wcfg[k] = cfg_data_r[k][0+:32];
+            assign fcfg[k] = cfg_data_r[k][32+:32];
 
+            // wcfg: n_wrap_c2: 7-bits, n_wrap_c1: 7-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits
+            assign wcfg_stride      [k]        = wcfg[k][1:0]  ;
+            assign wcfg_pad         [k]        = wcfg[k][3:2]  ;
+            assign wcfg_shape       [k][0+:9]  = wcfg[k][5:4]  ; // w
+            assign wcfg_shape       [k][9+:9]  = wcfg[k][7:6]  ; // h
+            assign wcfg_shape       [k][18+:7] = wcfg[k][8+:7] ; // n_wrap_c1
+            assign wcfg_n_wrap_c1   [k]        = wcfg[k][8+:7] ; // n_wrap_c1 == c1 / (4*N_CONV_UNIT).
+            assign wcfg_n_wrap_c2   [k]        = wcfg[k][15+:7]; // n_wrap_c2 == c2 / N_KERNEL.
+
+            // fcfg: n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits.
+            assign fcfg_shape       [k][0+:9]  = fcfg[k][0+:9] ; // w
+            assign fcfg_shape       [k][9+:9]  = fcfg[k][9+:9] ; // h
+            assign fcfg_shape       [k][18+:7] = fcfg[k][25+:7]; // n_wrap_c (of each particular ftm).
+            assign fcfg_n_wrap_c_sum[k]        = fcfg[k][18+:7]; // n_wrap_c_sum
+
+        end
+    endgenerate 
+
+
+
+    strided_buffer
+        #(
+            .N_BUF_X    (N_FTMBUF_X), 
+            .B_BUF_ADDR (B_BUF_ADDR),
+            .B_SHAPE   (B_SHAPE)  ,
+            .DATA_WIDTH (DATA_WIDTH),
+            .B_COORD    (B_COORD),
+            .N_CONV_UNIT(N_CONV_UNIT),
+            .UNIT_BURSTS(UNIT_BURSTS_WEI)
+        )
+        ftm_buffer
+        (
+            .clk  (clk	)	    ,    
+            .rstn (rstn)        ,     
+
+            // #####################
+            // # wr
+            // #####################
+            .shape        (fcfg_shape       [0]),
+            .n_wrap_c_sum (fcfg_n_wrap_c_sum[0]),
+
+            .wr_en   (fb_we     ),
+            .wr_di   (di        ),
+            .wr_last (),
+            .wr_ptr  (fb_wptr   ), 
+            .wr_base (          )        
+            .wr_tog  (          ),
+
+            // #####################
+            // # rd
+            // #####################
+            .stride    (wcfg_stride[1])   ,
+            .pad       (wcfg_pad   [1])   ,
+            .ftm_shape (fcfg_shape [1]),
+            .wei_shape (wcfg_shape [1]),
+            
+            .rd_en            (rd_en      ),
+            .rd_do            (fb_do      ), 
+            .rd_last          (fb_rd_last ),
+            .rd_ptr           (fb_rptr    ), 
+            .rd_base          (           )
+            .rd_base_incr_en  (0          ),
+        );
+
+    assign fb_suff = (fb_rptr == fb_wptr) ? 1'b0: 1'b1 ;
+
+
+    generate
+    genvar i, ii;
+
+        for (i=0; i < N_KERNEL; i=i+1) begin
+
+            strided_buffer
+                #(
+                    .N_BUF_X    (N_WEIBUF_X), 
+                    .B_BUF_ADDR (B_BUF_ADDR),
+                    .B_SHAPE    (B_SHAPE)  ,
+                    .DATA_WIDTH (DATA_WIDTH),
+                    .B_COORD    (B_COORD),
+                    .N_CONV_UNIT(N_CONV_UNIT),
+                    .UNIT_BURSTS(UNIT_BURSTS_FTM)
+                )
+                wei_buffer
+                (
+                    .clk  (clk	)	    ,    
+                    .rstn (rstn)         ,     
+
+                    // #####################
+                    // # wr
+                    // #####################
+                    .shape        (wcfg_shape    [0] ),
+                    .n_wrap_c_sum (wcfg_n_wrap_c1[0] ),
+
+                    .wr_en    (wb_we_i[i])  ,
+                    .wr_di    (di)          ,
+                    .wr_last  (wb_wr_last[i]),
+                    .wr_ptr   ( ),     
+                    .wr_base  (wb_wbase[i]) ,
+                    .wr_tog   (wb_tog[i]  ),    
+
+                    // #####################
+                    // # rd
+                    // #####################
+                    .stride           (1            ) ,
+                    .pad              (0            ) ,
+                    .ftm_shape        (wcfg_shape[1]),        
+                    .wei_shape        (wcfg_shape[1]),     
+
+                    .rd_en            (rd_en),
+                    .rd_do            (wb_do_i[i])  ,
+                    .rd_last          (),
+                    .rd_ptr           (),          
+                    .rd_base          (wb_rbase[i])
+                    .rd_base_incr_en  (fb_rd_last),                
+                    
+                );
+
+            assign wb_we_i[i] = (i == 0) ? (wb_tog[0] == wb_tog[N_KERNEL-1]) ? wb_we : 1'b0 :
+                                        (wb_tog[i-1] ^ wb_tog[i])         ? wb_we : 1'b0;
+
+            for (ii=0; ii < N_DSP_GROUP; ii=ii+1) 
+                assign wb_do[ii][i*B_PIXEL+:B_PIXEL] = wb_do_i[i][ii*B_PIXEL+:B_PIXEL];
+        end
+    endgenerate 
+
+
+    assign wb_full = (wb_wbase[0] > wb_rbase[0]) ? 
+            (N_BUF_ENTRIES + wb_rbase[0] - wb_wbase[0] < UNIT_BURSTS) ? 1'b1: 1'b0 : // wraddr > rdaddr
+            (                wb_rbase[0] - wb_wbase[0] < UNIT_BURSTS) ? 1'b1: 1'b0 ; // wraddr <= rdaddr
+
+    assign wb_suff = (wb_wbase[N_KERNEL-1] < wb_rbase[N_KERNEL-1]) ? 
+            (N_BUF_ENTRIES + 
+            wb_wbase[N_KERNEL-1] - wb_rbase[N_KERNEL-1] >= wcfg_n_wrap_c1[1]*wcfg_w[1]*wcfg_h[1]) ? 1'b1: 1'b0 : 
+           (wb_wbase[N_KERNEL-1] - wb_rbase[N_KERNEL-1] >= wcfg_n_wrap_c1[1]*wcfg_w[1]*wcfg_h[1]) ? 1'b1: 1'b0 ; 
+
+
+    latency_reg
+        #(
+            .N(N_DSP_GROUP), 
+            .B(1)
+        )
+        pipe_en_latency_reg_i
+        (
+            .clk	(clk			),
+            .clk_en (pipe_en        ),
+            .rstn	(rstn			),
+
+            .din	(pipe_en_i      ),
+            .dout	(pipe_en_o      )
+        );
+
+        
+
+    generate
+    genvar j;
+
+        for (j=0; j < N_DSP_GROUP; j=j+1) begin : GEN_DSP_GROUP
+
+            latency_reg
+                #(
+                    .N(j), // latency.
+                    .B(B_PIXEL)
+                )
+                fb_latency_reg_i
+                (
+                    .clk	(clk			),
+                    .clk_en (pipe_en        ),
+                    .rstn	(rstn			),
+            
+                    .din	(fb_do[j*B_PIXEL+:B_PIXEL]	),
+                    .dout	(fb_do_la[j]	)
+                );
+
+            latency_reg
+                #(
+                    .N(j), // latency.
+                    .B(B_PIXEL*N_KERNEL)
+                )
+                wb_latency_reg_i
+                (
+                    .clk	(clk			),
+                    .clk_en (pipe_en        ),
+                    .rstn	(rstn			),
+            
+                    .din	(wb_do[j]	),
+                    .dout	(wb_do_la[j]	)
+                );
+
+
+            dsp_group 
+                #(
+                    .N_KERNEL(N_KERNEL),
+                    .B_PIXEL (B_PIXEL)
+                )
+                dsp_group_i
+                (
+                    .clk 	  (clk            ),
+                    .clk_en   (pipe_en        ),
+                    .rstn	  (rstn           ),
+
+                    .wei      (wb_do_la[j]    ),
+                    .ftm      (fb_do_la[j]    ),
+
+                    .acc_i    (acc_i_arr[j]),
+                    .acc_o    (acc_o_arr[j])
+                );
+
+            assign is_tail_i[i] = (ID + j == wcfg_c1_mod_r) ? 1'b1 : 1'b0;
     
-
-generate
-genvar j;
-
-	for (j=0; j < N_DSP_GROUP; j=j+1) begin : GEN_DSP_GROUP
-
-		latency_reg
-			#(
-				.N(j), // latency.
-				.B(B_PIXEL)
-			)
-			fb_latency_reg_i
-			(
-                .clk	(clk			),
-				.rstn	(rstn			),
-		
-				.din	(fb_do[j*B_PIXEL+:B_PIXEL]	),
-				.dout	(fb_do_la[j]	)
-			);
-
-		latency_reg
-			#(
-				.N(j), // latency.
-				.B(B_PIXEL*N_KERNEL)
-			)
-			wb_latency_reg_i
-			(
-                .clk	(clk			),
-				.rstn	(rstn			),
-		
-				.din	(wb_do[j]	),
-				.dout	(wb_do_la[j]	)
-			);
+            assign acc_i_arr[j] = (j==0) ? acc_i: acc_o_arr[j-1];
+        end
+    endgenerate 
 
 
-        dsp_group 
-            #(
-                .N_DSP(N_KERNEL)
-            )
-            dsp_group_i
-            (
-                .clk 		   (clk                 ),
-                .rstn		   (rstn                ),
+    assign is_tail = |is_tail_r;
 
-                .inst_i        (inst_i_arr[j]       ),
-                .inst_o        (inst_o_arr[j]       ),
-
-                .wei_i         (wb_do_la[j]    ),
-                .ftm_i         (fb_do_la[j]    ),
-
-                .acc_i (acc_i_arr[j]),
-                .acc_o    (acc_o_arr[j])
-            );
-
-        assign is_tail_i[i] = (ID + j == wei_c1_mod_r) ? 1'b1 : 1'b0;
- 
-        assign acc_i_arr[j] = (j==0) ? acc_i: acc_o_arr[j-1];
-        assign inst_i_arr[j] = (j==0) ? inst_i: inst_o_arr[j-1];
-
-
-   
-        // assign acc_next = (is_tail_i[i] == 1'b1) ? acc_o_arr[j] : 0;
-       
-	end
-endgenerate 
-
-
-assign is_tail = |is_tail_r;
-
-// (c1 - 1) % (4 * N_CONV_UNIT).
-assign wei_c1_mod = wei_c1[B_N_DSP_C-1:0] - 1; // TODO: check whether 5'b00000 - 1 == 5'b11111.
-
-
-assign inst_o = inst_o_arr[N_DSP_GROUP-1];
-
-assign fb_empty = (fb_rptr == fb_wptr);
+    // (c1 - 1) % (4 * N_CONV_UNIT).
+    assign wcfg_c1_mod = wcfg_c1[B_N_DSP_C-1:0] - 1; // TODO: check whether 5'b00000 - 1 == 5'b11111.
 
 endmodule

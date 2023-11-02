@@ -11,11 +11,14 @@ module ddr_writer
         input wire                  clk     ,    
         input wire                  rstn    , 
 
-        input wire                      ddr_we ,
-        input wire [N_KERNEL*B_PIXEL:0] ddr_di  ,
-        
         input wire [31:0]               base_addr,
         input wire [31:0]               shape,
+
+        input wire                      ddr_valid ,
+        input wire [N_KERNEL*B_PIXEL:0] ddr_data  ,
+        output wire                     ddr_ready ,
+ 
+        
 
         output wire	[DATA_WIDTH+ADDR_WIDTH-1:0]	m_axis_tdata ,
         output wire	                	        m_axis_tvalid,
@@ -36,8 +39,8 @@ wire [ADDR_WIDTH-1:0]     addr_i;
 reg  [19:0]     cnt_xy_r;
 wire [19:0]     cnt_xy_lim;
 
-reg                      ddr_we_r;
-reg [N_KERNEL*B_PIXEL:0] ddr_di_r;
+reg                      ddr_valid_r;
+reg [N_KERNEL*B_PIXEL:0] ddr_data_r;
 
 always @( posedge clk )
 begin
@@ -48,28 +51,33 @@ begin
         cnt_xy_r <= 0;
         addr_r   <= 0;
 
-        ddr_we_r <= 0;
-        ddr_di_r <= 0;        
+        ddr_valid_r <= 0;
+        ddr_data_r <= 0;        
     end 
     else begin    
 
         // compute next addr offset.
-        if(ddr_we)begin 
+        if(ddr_valid)begin 
             
             if(cnt_xy_r == cnt_xy_lim)begin
                 
-                dc_r     <= dc_r + N_DSP_GROUP * (B_PIXEL/8); 
-                dxy_r   <= 0;
+                if (dc_r >= (c-N_KERNEL)*(B_PIXEL/8))
+                    dc_r <= 0;
+                else
+                    dc_r <= dc_r + N_KERNEL * (B_PIXEL/8); 
+
+                dxy_r    <= 0;
+                cnt_xy_r <= 0;
             end
             else begin
 
-                dxy_r   <= dxy_r + c * (B_PIXEL/8); 
+                dxy_r    <= dxy_r + c * (B_PIXEL/8); 
                 cnt_xy_r <= cnt_xy_r + 1;
             end
         end
         
-        ddr_we_r <= ddr_we; 
-        ddr_di_r <= ddr_di; 
+        ddr_valid_r <= ddr_valid; 
+        ddr_data_r <= ddr_data; 
         addr_r   <= addr_i; 
     end
 end    
@@ -82,9 +90,9 @@ assign c = shape[31:20];
 
 assign cnt_xy_lim = w * h;
 
-assign m_axis_tdata[DATA_WIDTH-1:0]                     = ddr_di_r;
+assign m_axis_tdata[DATA_WIDTH-1:0]                     = ddr_data_r;
 assign m_axis_tdata[DATA_WIDTH+ADDR_WIDTH-1:DATA_WIDTH] = addr_r;
-assign m_axis_tvalid                                    = ddr_we_r;
+assign m_axis_tvalid                                    = ddr_valid_r;
 
 
 endmodule
