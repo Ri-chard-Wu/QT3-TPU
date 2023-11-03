@@ -238,13 +238,13 @@ module qt3_tpu_v1
 
 
 
-	wire [FW-1:0] cfg_i_data  ;
-	wire          cfg_i_valid ;
-	wire 		  cfg_i_ready ;
+	wire [FW-1:0]  	cfg_i_data  ;
+	wire           	cfg_i_valid ;
+	wire 		    cfg_i_ready ;
 
-	wire [64-1:0] cfg_o_data  ;
-	wire          cfg_o_valid ;
-	wire 		  cfg_o_ready ;
+	wire [63:0] 	cfg_o_data  				 ;
+	wire [1:0]      cfg_o_valid 				 ;
+	wire [1:0]  	cfg_o_ready [N_CONV_UNIT-1:0];
 
 	// wire [63:0]   conv_para   ;
 	// wire 		  conv_para_we;
@@ -335,7 +335,9 @@ module qt3_tpu_v1
 			.N_KERNEL(N_KERNEL),
 			.B_PIXEL (B_PIXEL),
 			.DATA_WIDTH (DATA_WIDTH),
-			.N_DSP_GROUP (N_DSP_GROUP)
+			.BURST_LENGTH (BURST_LENGTH),
+			.N_DSP_GROUP (N_DSP_GROUP),
+ 						
 		)
 		ddr_reader_i
 		( 
@@ -410,7 +412,7 @@ genvar i;
 
 				.cfg_i_data     (cfg_o_data       ),
 				.cfg_i_valid    (cfg_o_valid      ),
-				.cfg_i_ready    (cfg_o_ready      ),
+				.cfg_i_ready    (cfg_o_ready_i[i]   ),
 
 				// TODO: implement clr logic to clear regs in 
 					// all conv_unit to be ready for next layer.
@@ -419,13 +421,11 @@ genvar i;
 				.wb_empty       (wb_empty[i]      ),
 				.wb_suff 		(wb_suff[i]  	  ),
 				.wb_full        (wb_full[i] 	  ),
-				// .wb_cfg         (wb_cfg		      ),						
 				.fb_we          (fb_we[i]         ),
 				.fb_clr         (fb_clr[i]        ),
 				.fb_empty       (fb_empty[i]      ),
 				.fb_suff  		(fb_suff[i]       ), // not needed?
 				.fb_full        (fb_full[i] 	  ),
-				// .fb_cfg         (fb_cfg		      ),						
 				.di             (mem_di           ),
 
 				.acc_i  		(acc_i[i]   	  ),
@@ -450,6 +450,12 @@ assign fb_full_i = |fb_full;
 
 assign wb_empty_i = |wb_empty;
 assign fb_empty_i = |fb_empty;
+
+
+// TODO: not done implement.
+assign cfg_o_ready = cfg_o_ready_i[0];
+
+
 // TODO: allow using different shapes in writer and 
 	// reader of strided buffer to facilitate pre-load next layer.
 // ftm_n_wrap_c_acc	== fifo_ftm_dout[57+:7].
@@ -516,8 +522,8 @@ ddr_writer
 		.m_axis_tready	(s_axis_tready )
     );
 
-assign out_addr 		 = cfg_data[178+:32];
-assign out_shape 		 = cfg_data[210+:32];
+assign out_addr 		 = cfg_i_data[178+:32];
+assign out_shape 		 = cfg_i_data[210+:32];
 
 
 assign pipe_en = s_axis_tready & (wb_suff_i) & (fb_suff_i);

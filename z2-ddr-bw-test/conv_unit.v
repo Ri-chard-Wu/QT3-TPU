@@ -41,9 +41,9 @@ module conv_unit
         input wire                     clk    ,    
         input wire                     rstn    ,     
         
-        input  wire                  cfg_i_valid,
         input  wire [63:0]           cfg_i_data ,
-        output wire 		         cfg_i_ready,
+        input  wire [1:0]            cfg_i_valid,
+        output wire [1:0]	         cfg_i_ready,
 
 
         input wire                   wb_we    ,
@@ -51,13 +51,11 @@ module conv_unit
         output wire                  wb_empty ,
         output wire                  wb_suff  ,
         output wire                  wb_full  , 
-		// input wire    [31:0]		 wcfg   , 
         input wire                   fb_we    ,
         input wire                   fb_clr   ,
         output wire                  fb_empty ,
         output wire                  fb_suff  ,
         output wire                  fb_full  ,
-        // input wire    [31:0]		 fcfg   , 
         input wire [DATA_WIDTH-1:0]  di       ,
 
 
@@ -67,7 +65,18 @@ module conv_unit
  
     );
 
+    localparam B_N_DSP_C = $clog2(N_CONV_UNIT << 2);
     localparam N_BUF_ENTRIES = 512;
+
+
+    localparam WAIT_CFG_ST = 0;
+    localparam RUN_ST      = 1;
+    reg  [1:0] state [0:1]   ;
+    reg  [1:0] wait_cfg_st   ;
+    reg  [1:0] run_st        ;
+    wire [1:0] last          ;
+    reg  [6:0] c2_cnt_r [0:1];
+
 
     wire [N_DSP_GROUP-1:0] is_tail_i;
     reg  [N_DSP_GROUP-1:0] is_tail_r;
@@ -77,7 +86,7 @@ module conv_unit
 
 
     // weight shape (c1: 12-bits, w: 2-bits, h: 2-bits, pad: 2-bits, stride: 2-bits).
-    localparam B_N_DSP_C = $clog2(N_CONV_UNIT << 2);
+    
     wire [1:0]           wcfg_stride ;
     wire [1:0]           wcfg_pad    ;
     wire [24:0]          wcfg_shape  ;
@@ -87,8 +96,6 @@ module conv_unit
 
     // fm shape (c: 12-bits, w: 10-bits, h: 10-bits).
     wire [24:0] fcfg_shape  ;
-
-
 
 
     wire [N_FTMBUF_X*DATA_WIDTH-1:0] fb_do_raw;
@@ -110,8 +117,7 @@ module conv_unit
 
     wire [N_KERNEL:0] wb_tog;
 
-    // reg [B_PARA-1:0] para_r;
-
+  
 
     integer i;
 
@@ -119,58 +125,21 @@ module conv_unit
     begin
         if ( rstn == 1'b0 ) begin
 
-            state	<= INIT_ST;
-            // para_r  <= 0;
-
             wb_we_sel    <= 0;
             wcfg_c1_mod_r <= 0;
-            is_tail_r    <= 0;    
+            is_tail_r    <= 0;   
         end 
         else begin    
-
-            // if(para_we) 
-            //     para_r <= para;
 
             wcfg_c1_mod_r <= wcfg_c1_mod;
             is_tail_r    <= is_tail_i ;
 
-
-            for (i=0; i<2; i=i+1) 
-                if (cfg_i_valid[i]) begin
+            // for (i=0; i<2; i=i+1) 
+            //     if (cfg_i_valid[i]) begin
                     
-                    cfg_data_r [i] <= cfg_i_data;
-                    cfg_i_ready[i] <= 1'b0; 
-                end
-                    
-
-
-            if (wb_wr_last[N_KERNEL-1]) begin
-                if (wr_c2_cnt_r == wcfg_n_wrap_c2[0]) begin
-                    
-                    // Can update wr's cfg, since all wr-related activitis for this layer are done.
-                    cfg_i_ready[0] <= 1'b1; 
-                    wr_c2_cnt_r    <= 0;
-                end
-                else
-                    wr_c2_cnt_r <= wr_c2_cnt_r + 1;
-            end
-
-
-            if (fb_rd_last) begin
-                if (rd_c2_cnt_r == wcfg_n_wrap_c2[1]) begin
-                    
-                    // cfg_i_ready[0] <= 1'b1; // can begin loading next layer's ftm.
-
-                    // Can update rd's cfg, since all rd-related activitis for this layer are done.
-                    // Can begin loading next layer's ftm.
-                    cfg_i_ready[1] <= 1'b1; 
-
-                    rd_c2_cnt_r    <= 0;
-                end
-                else
-                    rd_c2_cnt_r <= rd_c2_cnt_r + 1;
-            end
-
+            //         cfg_data_r [i] <= cfg_i_data;
+            //         cfg_i_ready[i] <= 1'b0; 
+            //     end
         end
     end    
 
@@ -242,11 +211,63 @@ module conv_unit
                                     : 1'b0;
 
 
+
+    assign last[0] = wb_wr_last[N_KERNEL-1];
+    assign last[1] = fb_rd_last;
+
+    assign cfg_i_ready = wait_cfg_st;
+
+
     generate
     genvar k;
 
         for (k=0; k < 2; k=k+1) begin
 
+            always @( posedge clk )
+            begin
+                if ( rstn == 1'b0 ) begin
+
+                    state[k]	<= WAIT_CFG_ST;
+                end 
+                else begin    
+
+                    case(state[k])
+                        WAIT_CFG_ST:
+                            if (cfg_i_valid[k])
+                                state[k] <= RUN_ST;
+                        RUN_ST:
+                            if(c2_cnt_r[k] == wcfg_n_wrap_c2[k])
+                                state[k] <= WAIT_CFG_ST;
+                    endcase	
+
+                    if (wait_cfg_st[k])
+                        c2_cnt_r[k]    <= 0;
+                    else if (run_st[k])
+                        if (last[k]) 
+                            c2_cnt_r[k] <= c2_cnt_r[k] + 1;
+
+                    if (wait_cfg_st[k] && cfg_i_valid[k]) 
+                        cfg_data_r[k] <= cfg_i_data;
+                end
+            end    
+
+
+            always @(state[k]) begin
+
+                wait_cfg_st[k]	  = 0;
+                run_st[k]         = 0;
+            
+                case (state[k])
+
+                    WAIT_CFG_ST:
+                        wait_cfg_st[k]  = 1;
+
+                    RUN_ST:
+                        run_st[k]       = 1;
+                endcase
+            end
+
+            
             assign wcfg[k] = cfg_data_r[k][0+:32];
             assign fcfg[k] = cfg_data_r[k][32+:32];
 
@@ -264,7 +285,6 @@ module conv_unit
             assign fcfg_shape       [k][9+:9]  = fcfg[k][9+:9] ; // h
             assign fcfg_shape       [k][18+:7] = fcfg[k][25+:7]; // n_wrap_c (of each particular ftm).
             assign fcfg_n_wrap_c_sum[k]        = fcfg[k][18+:7]; // n_wrap_c_sum
-
         end
     endgenerate 
 
