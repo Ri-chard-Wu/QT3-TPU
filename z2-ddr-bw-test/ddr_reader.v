@@ -103,8 +103,6 @@ reg  [3:0]  ftm_n_r  ;
 wire [63:0] wei_addr_gen_cfg;
 wire [63:0] ftm_addr_gen_cfg;
 
-assign wei_addr_gen_cfg = cfg_i_data_r[18+:64];
-assign ftm_addr_gen_cfg = fifo_dout   [0 +:64];
 
 
 always @( posedge clk )
@@ -268,6 +266,11 @@ assign RADDR_REG   = (wei_load_st) ? wei_addr :
 assign RNBURST_REG = (wei_load_st) ? wei_n_bursts :
 				     (ftm_load_st) ? ftm_n_bursts : 0; 
 
+// cfg_i_data_r[104+:3]: n_last_c1.
+assign wei_addr_gen_cfg = {cfg_i_data_r[104+:3], cfg_i_data_r[18+:57]}; // $r0 & $r1 
+assign ftm_addr_gen_cfg = {cfg_i_data_r[104+:3], fifo_dout   [0 +:57]};
+
+
 
 // 128-bits
 assign cfg_o_data  = {
@@ -275,11 +278,11 @@ assign cfg_o_data  = {
 				cfg_i_data_r[178+:32], cfg_i_data_r[210+:32],
 
 				// n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits.
-				fifo_dout[57+:7], 
+				fifo_dout[57+:7], cfg_i_data_r[114+:25], // $r3
 				
-				// n_wrap_c1: 7-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits.
-				cfg_i_data_r[114+:25], cfg_i_data_r[82+:32]
-				
+				// n_last_c1: 5-bits, n_wrap_c2: 7-bits, n_wrap_c1: 7-bits, h: 2-bits,
+											//  w: 2-bits, pad: 2-bits, stride: 2-bits.
+				cfg_i_data_r[82+:32] // $r2
 				}; 
 
 
@@ -375,6 +378,56 @@ fifo_axi_reader
         .mem_we         (mem_we         ),
         .mem_di         (mem_di         )
     );
+
+
+
+latency_reg
+	#(
+		.N(16), // 16 entries.
+		.B(64)
+	)
+	reg_fifo_i
+	(
+		.clk	(clk			),
+		.clk_en (pipe_en        ),
+		.rstn	(rstn			),
+
+		.din	(mem_di			),
+		.dout	(mem_di_la   	)
+	);
+	
+assign n_exc_c1 = 4 - n_pad_c1;
+
+
+    always @( posedge clk )
+    begin
+        if ( rstn == 1'b0 ) begin
+            
+
+        end 
+        else begin    
+
+			if (sel_r == 3)
+				sel_r <= 0;
+			else 
+				sel_r <= sel_r + 1;
+
+			if (sel_r == 0)
+				a_3 <= mem_di[0*16+:3*16]; 
+				b_1 <= mem_di[3*16+:1*16];
+			else if (sel_r == 1)
+				b_2 <= mem_di[0*16+:2*16]; 
+				c_2 <= mem_di[2*16+:2*16];
+			else if (sel_r == 2)
+				c_1 <= mem_di[0*16+:1*16]; 
+				d_3 <= mem_di[1*16+:3*16];
+        end
+    end   
+
+assign out = (sel_r == 1) ? a_3 	   :
+		     (sel_r == 2) ? {b_2, b_1} :
+		     (sel_r == 3) ? {c_1, c_2} :
+		     (sel_r == 0) ? d3 		   : 0;
 
 
 

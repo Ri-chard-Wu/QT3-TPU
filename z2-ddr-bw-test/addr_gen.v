@@ -42,9 +42,11 @@ module addr_gen
     wire [24:0] nbursts_i;
     
 
-    assign addr_i    = cfg[0+:32]; 
-    assign nlast_i   = cfg[32+:7]; 
-    assign nbursts_i = cfg[39+:18];
+    assign addr_i       = cfg[0+:32]; 
+    assign nlast_i      = cfg[32+:7]; 
+    assign nbursts_i    = cfg[39+:18];
+    assign n_last_c1_i  = cfg[57+:3];
+    assign n_pad_c1_i = cfg[60+:2];
 
 
     always @( posedge clk )
@@ -97,17 +99,12 @@ module addr_gen
                 cnt_r <= cnt_r + BYTES_PER_AXI_TRANSFER;
 
 
-
             if (latch_en == 1'b1) begin
                 cu_sel_r <= 0;	
             end
             else if (mem_we == 1'b1 && pending == 1'b1) begin		
         
-                // TODO: should be min(N_CONV_UNIT, c1).
-                // TODO: consider replace following with local checks in each conv_units: 
-                    // pass down sel signal in cyclic order. Since they know whethe themselves are the tail,
-                    // so it would be convenit to know when to wrap.
-                if (cu_sel_r == N_CONV_UNIT-1) 
+                if (cu_sel_r == n_last_c1_i-1) 
                     cu_sel_r <= 0;
                 else
                     cu_sel_r <= cu_sel_r + 1;
@@ -118,7 +115,6 @@ module addr_gen
 
     assign addr    = addr_r    ;
     assign nbursts = n_bursts_r;
-
 
     assign pending = (cnt_r == cnt_incr_r) ? 0 : 1;
     assign done   =  (n_rema_bursts_r == 0) ? 1'b1 : 1'b0;

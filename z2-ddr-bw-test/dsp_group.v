@@ -11,12 +11,16 @@ module dsp_group
         input wire                         clk	 ,    
         input wire                         clk_en,    
         input wire                         rstn    ,   
+        
+        input wire                         skip
 
         input wire [B_PIXEL*N_KERNEL-1:0]  wei,
         input wire [B_PIXEL-1:0]           ftm,
 
         input  wire [2*B_PIXEL*N_KERNEL-1:0] acc_i,
         output wire [2*B_PIXEL*N_KERNEL-1:0] acc_o,
+
+        
     );
 
 
@@ -50,7 +54,9 @@ module dsp_group
             assign A_IN[j] = { {9{wei[B_PIXEL*(j+1) - 1]}}, wei[j*B_PIXEL+:B_PIXEL] };
             assign B_IN[j] = { {2{ftm[B_PIXEL*(0+1) - 1]}}, ftm[0*B_PIXEL+:B_PIXEL] };
 
-            assign acc_o[j*2*B_PIXEL+:2*B_PIXEL] = P_OUT[j] + acc_i_r[j*2*B_PIXEL+:2*B_PIXEL]; 
+        
+            assign acc_o[j*2*B_PIXEL+:2*B_PIXEL] = (skip) ? P_OUT[j] + acc_i_r[j*2*B_PIXEL+:2*B_PIXEL]
+                                                          :            acc_i_r[j*2*B_PIXEL+:2*B_PIXEL]; 
         end
     endgenerate 
 

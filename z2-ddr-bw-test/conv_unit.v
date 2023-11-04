@@ -26,36 +26,28 @@ module conv_unit
         parameter N_CONV_UNIT = 8,
 
 		parameter UNIT_BURSTS_WEI = 32,  // need to be power of 2.
-		parameter UNIT_BURSTS_FTM = 1024  // need to be power of 2.	        
-        
-        
+		parameter UNIT_BURSTS_FTM = 1024  // need to be power of 2.	   
     )
-    (
+    ( 
+		// output wire is_tail		              , 
 
-		output wire is_tail		              , 
+        input  wire                  pipe_en   ,
+        input  wire                  pipe_en_i ,
+        output wire                  pipe_en_o ,
 
-        input  wire          pipe_en           ,
-        input  wire          pipe_en_i         ,
-        output wire          pipe_en_o         ,
-
-        input wire                     clk    ,    
-        input wire                     rstn    ,     
+        input wire                     clk      ,    
+        input wire                     rstn      ,     
         
-
         input  wire [63:0]           cfg_wr_data ,
 
         input  wire [63:0]           cfg_rd_data,
-        output wire                  cfg_rd_done	    ,
-        input  wire                  cfg_rd_run     ,
+        output wire                  cfg_rd_done  ,
+        input  wire                  cfg_rd_run  ,
 
         input wire                   wb_we    ,
-        input wire                   wb_clr   ,
-        output wire                  wb_empty ,
         output wire                  wb_suff  ,
         output wire                  wb_full  , 
         input wire                   fb_we    ,
-        input wire                   fb_clr   ,
-        output wire                  fb_empty ,
         output wire                  fb_suff  ,
         output wire                  fb_full  ,
         input wire [DATA_WIDTH-1:0]  di       ,
@@ -71,15 +63,9 @@ module conv_unit
     localparam N_BUF_ENTRIES = 512;
 
 
- 
-    reg  [6:0] c2_cnt_r [0:1];
+    reg  [6:0] c2_cnt_r;
 
-
-    wire [N_DSP_GROUP-1:0] is_tail_i;
-    reg  [N_DSP_GROUP-1:0] is_tail_r;
-
-    reg  [$clog2(N_KERNEL)-1:0] wb_we_sel;
-    wire [N_KERNEL-1:0]         wb_we_i;
+    wire [N_KERNEL-1:0] wb_we_i;
 
 
     // weight shape (c1: 12-bits, w: 2-bits, h: 2-bits, pad: 2-bits, stride: 2-bits).
@@ -88,8 +74,6 @@ module conv_unit
     wire [1:0]           wcfg_pad    ;
     wire [24:0]          wcfg_shape  ;
     wire [11:0]          wcfg_c1;
-    wire [B_N_DSP_C-1:0] wcfg_c1_mod;
-    wire [B_N_DSP_C-1:0] wcfg_c1_mod_r;
 
     // fm shape (c: 12-bits, w: 10-bits, h: 10-bits).
     wire [24:0] fcfg_shape  ;
@@ -113,36 +97,11 @@ module conv_unit
 
     wire [N_KERNEL:0] wb_tog;
 
-  
-
-    integer i;
-
-    always @( posedge clk )
-    begin
-        if ( rstn == 1'b0 ) begin
-
-            wb_we_sel    <= 0;
-            wcfg_c1_mod_r <= 0;
-            is_tail_r    <= 0;   
-        end 
-        else begin    
-
-            wcfg_c1_mod_r <= wcfg_c1_mod;
-            is_tail_r    <= is_tail_i ;
-
-            // for (i=0; i<2; i=i+1) 
-            //     if (cfg_i_valid[i]) begin
-                    
-            //       
-            //     end
-        end
-    end    
-
 
 
 
     generate
-        if (ID == 4*(N_CONV_UNIT-1)) begin
+        if (ID == wcfg_n_last_c1[1]) begin
 
             wire[7:0]                    n_wrap_c_lim;
             reg [7:0]                    n_wrap_c_r;
@@ -190,7 +149,8 @@ module conv_unit
                 end
             end     
 
-            assign n_wrap_c_lim = (wcfg_c1 >> $clog2(4*N_CONV_UNIT));
+            // floor(c1 / (4*N_CONV_UNIT))
+            assign n_wrap_c_lim = wcfg_n_wrap_c1[0]-1;
 
             assign acc_o       = acc_o_r;
             assign acc_o_valid = acc_o_valid_r; 
@@ -221,6 +181,8 @@ module conv_unit
     assign wcfg_shape       [0][18+:7] = wcfg[0][8+:7] ; // n_wrap_c1
     assign wcfg_n_wrap_c1   [0]        = wcfg[0][8+:7] ; // n_wrap_c1 == c1 / (4*N_CONV_UNIT).
     assign wcfg_n_wrap_c2   [0]        = wcfg[0][15+:7]; // n_wrap_c2 == c2 / N_KERNEL.
+    assign wcfg_n_last_c1   [0]        = wcfg[0][22+:3];  
+    
 
     // fcfg: n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits.
     assign fcfg_shape       [0][0+:9]  = fcfg[0][0+:9] ; // w
@@ -261,6 +223,7 @@ module conv_unit
     assign wcfg_shape       [1][18+:7] = wcfg[1][8+:7] ; // n_wrap_c1
     assign wcfg_n_wrap_c1   [1]        = wcfg[1][8+:7] ; // n_wrap_c1 == c1 / (4*N_CONV_UNIT).
     assign wcfg_n_wrap_c2   [1]        = wcfg[1][15+:7]; // n_wrap_c2 == c2 / N_KERNEL.
+    assign wcfg_n_last_c1   [1]        = wcfg[1][22+:3];  
 
     // fcfg: n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits.
     assign fcfg_shape       [1][0+:9]  = fcfg[1][0+:9] ; // w
@@ -365,12 +328,11 @@ module conv_unit
                     .rd_last          (),
                     .rd_ptr           (),          
                     .rd_base          (wb_rbase[i])
-                    .rd_base_incr_en  (fb_rd_last),                
-                    
+                    .rd_base_incr_en  (fb_rd_last)
                 );
 
-            assign wb_we_i[i] = (i == 0) ? (wb_tog[0] == wb_tog[N_KERNEL-1]) ? wb_we : 1'b0 :
-                                        (wb_tog[i-1] ^ wb_tog[i])         ? wb_we : 1'b0;
+            assign wb_we_i[i] = (i == 0) ? (wb_tog[0] == wb_tog[N_KERNEL-1]) ? wb_we : 1'b0:
+                                           (wb_tog[i-1] ^ wb_tog[i])         ? wb_we : 1'b0;
 
             for (ii=0; ii < N_DSP_GROUP; ii=ii+1) 
                 assign wb_do[ii][i*B_PIXEL+:B_PIXEL] = wb_do_i[i][ii*B_PIXEL+:B_PIXEL];
@@ -452,6 +414,8 @@ module conv_unit
                     .clk_en   (pipe_en        ),
                     .rstn	  (rstn           ),
 
+                    .skip     (skip           ),
+
                     .wei      (wb_do_la[j]    ),
                     .ftm      (fb_do_la[j]    ),
 
@@ -459,16 +423,10 @@ module conv_unit
                     .acc_o    (acc_o_arr[j])
                 );
 
-            assign is_tail_i[i] = (ID + j == wcfg_c1_mod_r) ? 1'b1 : 1'b0;
-    
             assign acc_i_arr[j] = (j==0) ? acc_i: acc_o_arr[j-1];
         end
     endgenerate 
 
-
-    assign is_tail = |is_tail_r;
-
-    // (c1 - 1) % (4 * N_CONV_UNIT).
-    assign wcfg_c1_mod = wcfg_c1[B_N_DSP_C-1:0] - 1; // TODO: check whether 5'b00000 - 1 == 5'b11111.
+    assign skip = (ID >= wcfg_n_last_c1[1]) ? 1 : 0;
 
 endmodule

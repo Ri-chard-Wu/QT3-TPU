@@ -223,19 +223,14 @@ module qt3_tpu_v1
 	wire   [31:0]		     fb_cfg   ;
 	wire   [DATA_WIDTH-1:0]  mem_di   ;
 
-	wire   [N_CONV_UNIT-1:0] wb_suff       ;
-	wire   [N_CONV_UNIT-1:0] wb_suff_reduc ;
-	wire   [N_CONV_UNIT-1:0] wb_full       ;           
-	wire   [N_CONV_UNIT-1:0] fb_suff       ; 
-	wire   [N_CONV_UNIT-1:0] fb_full       ;         
-	wire 				     wb_suff_i ;
-	wire 				     wb_full_i ;   
-	wire 				     wb_empty_i;	           
-	wire 				     fb_suff_i ; 
-	wire 				     fb_full_i ;    
-	wire 				     fb_empty_i;  	     
-
-
+	wire   				      wb_suff       ;
+	wire  				      wb_full       ;           
+	wire  				      fb_suff       ; 
+	wire  				      fb_full       ;         
+	wire 	[N_CONV_UNIT-1:0] wb_suff_i ;
+	wire 	[N_CONV_UNIT-1:0] wb_full_i ;   
+	wire 	[N_CONV_UNIT-1:0] fb_suff_i ; 
+	wire 	[N_CONV_UNIT-1:0] fb_full_i ;    
 
 
 	wire [FW-1:0]  	cfg_i_data  ;
@@ -245,10 +240,7 @@ module qt3_tpu_v1
 	wire [127:0] 	       m0_cfg_data ;
 	wire 		           m0_cfg_valid;
 	wire 				   m0_cfg_ready;
-	// wire [N_CONV_UNIT-1:0] cfg_o_ready_i;
 
-	// wire [63:0]   conv_para   ;
-	// wire 		  conv_para_we;
 
 	wire [31:0]   out_shape   ;
 	wire [31:0]   out_addr    ;
@@ -337,8 +329,7 @@ module qt3_tpu_v1
 			.B_PIXEL (B_PIXEL),
 			.DATA_WIDTH (DATA_WIDTH),
 			.BURST_LENGTH (BURST_LENGTH),
-			.N_DSP_GROUP (N_DSP_GROUP),
- 						
+			.N_DSP_GROUP (N_DSP_GROUP)
 		)
 		ddr_reader_i
 		( 
@@ -372,13 +363,13 @@ module qt3_tpu_v1
 			// write buffers.
 			.wb_we    	    (wb_we    		),
 			.wb_clr   	    (wb_clr   		),
-			.wb_suff 	    (wb_suff_i      ),
-			.wb_full        (wb_full_i      ),	
+			.wb_suff 	    (wb_suff        ),
+			.wb_full        (wb_full        ),	
 			.wb_cfg         (wb_cfg		    ),		
 			.fb_we    	    (fb_we    		),
 			.fb_clr   	    (fb_clr   		),
 			.fb_suff 		(               ), // not needed?
-			.fb_full        (fb_full_i      ),
+			.fb_full        (fb_full        ),
 			.fb_cfg         (fb_cfg		    ),			
 			.mem_di 		(mem_di         )
 		);
@@ -418,13 +409,13 @@ module qt3_tpu_v1
 					.DATA_WIDTH(DATA_WIDTH),
 					.N_KERNEL  (N_KERNEL),
 					.N_CONV_UNIT(N_CONV_UNIT),
-					.ID (4*i)
+					.ID (i)
 				)
 				conv_unit_i
 				(
 					// Together with c1 can allow the conv to know whether it is the last one
 						// in case c1 < N_CONV_UNIT * N_CONV_UNIT.	
-					.is_tail		(is_tail[i]		), 
+					// .is_tail		(is_tail[i]		), 
 
 					.clk		    (aclk			),
 					.rstn         	(aresetn		),
@@ -440,17 +431,12 @@ module qt3_tpu_v1
 
 					// TODO: implement clr logic to clear regs in 
 						// all conv_unit to be ready for next layer.
-					.wb_we          (wb_we[i]         ),
-					// .wb_clr         (wb_clr[i]        ),
-					// .wb_empty       (wb_empty[i]      ),
-					.wb_suff 		(wb_suff[i]  	  ),
-					.wb_full        (wb_full[i] 	  ),
-
-					.fb_we          (fb_we[i]         ),
-					// .fb_clr         (fb_clr[i]        ),
-					// .fb_empty       (fb_empty[i]      ),
-					.fb_suff  		(fb_suff[i]       ), // not needed?
-					.fb_full        (fb_full[i] 	  ),
+					.wb_we          (wb_we    [i]     ),
+					.wb_suff 		(wb_suff_i[i]  	  ),
+					.wb_full        (wb_full_i[i] 	  ),
+					.fb_we          (fb_we    [i]     ),
+					.fb_suff  		(fb_suff_i[i]     ), // not needed?
+					.fb_full        (fb_full_i[i] 	  ),
 					.di             (mem_di           ),
 
 					.acc_i  		(acc_i[i]   	  ),
@@ -458,22 +444,27 @@ module qt3_tpu_v1
 					.acc_o_valid  	(acc_o_valid[i]	  ) // only the last (not tail) conv_unit will be checked.
 				);
 			
-			// Only look at tail: if tail is sufficient, then all others are sufficient.
-			assign wb_suff_reduc[i] = (is_tail[i]) ? wb_suff[i] : 0;
-			assign fb_suff_reduc[i] = (is_tail[i]) ? fb_suff[i] : 0;
-
+			assign wb_suff_ii[i] 	 = (i == n_last_c1-1) ? wb_suff_i[i] 	 : 0;
+			assign fb_suff_ii[i] 	 = (i == n_last_c1-1) ? fb_suff_i[i] 	 : 0;
+			assign m1_cfg_done_ii[i] = (i == n_last_c1-1) ? m1_cfg_done_i[i] : 0;
+			
 			assign pipe_en_i[i] = (i==0) ? pipe_en   : pipe_en_o[i-1];
 			assign acc_i[i] 	= (i==0) ? 0 	     : acc_o[i-1];
 		end
 	endgenerate 
 
-	assign wb_suff_i = (wb_suff_reduc > 0) ? 1'b1 : 1'b0;
-	assign fb_suff_i = (fb_suff_reduc > 0) ? 1'b1 : 1'b0;
+	assign m1_cfg_done = |m1_cfg_done_ii;
+	assign pipe_en     = s_axis_tready & (wb_suff) & (fb_suff) & (~m1_cfg_done);
 
-	assign wb_full_i = |wb_full;
-	assign fb_full_i = |fb_full;
+	assign wb_suff = |wb_suff_ii;
+	assign fb_suff = |fb_suff_ii;
 
-	assign m1_cfg_done = |m1_cfg_done_i;
+	assign wb_full = wb_full_i[0];
+	assign fb_full = fb_full_i[0];
+
+	
+
+
 
 	// TODO: write output data directly back to fb BRAM until fb BRAM run out of space.
 	activation_unit #(
@@ -555,7 +546,7 @@ module qt3_tpu_v1
 
 
 
-	assign pipe_en = s_axis_tready & (wb_suff_i) & (fb_suff_i);
+	
 
 
 
