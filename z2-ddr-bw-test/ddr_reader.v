@@ -23,9 +23,9 @@ module ddr_reader
         input  wire [FW-1:0]             cfg_i_data ,
         output wire 		             cfg_i_ready,
 
-		output wire [63:0]               cfg_o_data ,
-        output wire [1:0]	             cfg_o_valid,
-        input  wire [1:0]	             cfg_o_ready,
+		output wire [127:0]               cfg_o_data ,
+        output wire      	             cfg_o_valid,
+        input  wire      	             cfg_o_ready,
 
 		input  wire 					 fifo_empty,
 		output wire 					 fifo_rd_en,
@@ -81,16 +81,16 @@ reg ftm_latch_st    ;
 reg [3:0] state;
 
 
-wire [31:0] wei_addr 	  ;
-wire [6:0]  wei_nlast     ;
-wire [24:0] wei_nbursts   ;
+
 wire 		wei_done      ; 
 wire 		wei_pending   ;
-wire [31:0] ftm_addr 	  ;
-wire [6:0]  ftm_nlast     ;
-wire [24:0] ftm_nbursts   ;
+wire [31:0] wei_addr    ;
+wire [31:0] wei_n_bursts;
 wire 		ftm_done      ; 
 wire 		ftm_pending   ;
+wire [31:0] ftm_addr    ;
+wire [31:0] ftm_n_bursts;
+
 
 wire [3:0]  wei_cu_sel;
 wire [3:0]  ftm_cu_sel;
@@ -106,16 +106,6 @@ wire [63:0] ftm_addr_gen_cfg;
 assign wei_addr_gen_cfg = cfg_i_data_r[18+:64];
 assign ftm_addr_gen_cfg = fifo_dout   [0 +:64];
 
-// assign wei_addr    = cfg_i_data_r[18+:32]; // $r0
-// assign wei_nlast   = cfg_i_data_r[50+:7];  // number of valid bytes in last burst. 
-// assign wei_nbursts = cfg_i_data_r[57+:18]; // each burst is 128 bytes (16 * 64-bits).
-
-
-
-// // n_wrap_c_acc: 7-bits, n_bursts: 18-bits, valid_bytes_in_last_burst: 7-bits
-// assign ftm_addr    = fifo_dout[0+:32];
-// assign ftm_nlast   = fifo_dout[32+:7];
-// assign ftm_nbursts = fifo_dout[39+:18];
 
 always @( posedge clk )
 begin
@@ -127,22 +117,28 @@ begin
     end 
     else begin    
 
-		// update wr's cfg -> load wei until suff -> after suff, if rd is still not ready for cfg, keep loading wei. Else, update rd's cfg and load ftm until done. If wei is done while rd is still not ready, idle wait until rd is ready. -> load wei until done -> go back to first step and repeat.
+		// Update wr's cfg -> 
+		// Load wei until suff -> 
+		// After suff, if rd is still not ready for cfg, keep loading wei.
+			// Else, update rd's cfg and load ftm until done. 
+			// If wei is done while rd is still not ready, idle wait until rd is ready. -> 
+		// Load wei until done -> go back to first step and repeat.
 
 		case(state)
 
 			INIT_ST:
                 if (cfg_i_valid == 1'b1) // Will set fifo_rd_en to 1.
-                    state <= CFG_WR_ST;
+                    state <= WEI_LATCH_ST;
 
 			// Need to preload until suff for next layer.
-			CFG_WR_ST:
-				if (cfg_o_ready[0])
-					if (~wb_full)
-						state <= WEI_LATCH_ST;			
+			// CFG_WR_ST:
+			// 	if (cfg_o_ready[0])
+			// 		if (~wb_full)
+			// 			state <= WEI_LATCH_ST;			
 		
 			WEI_LATCH_ST: 
-				state <= WEI_INCR_ST;
+				if (~wb_full)
+					state <= WEI_INCR_ST;
 
 			WEI_INCR_ST:
 					state <= WEI_LOAD_ST;
@@ -150,21 +146,23 @@ begin
 			WEI_LOAD_ST:
 				if (RDONE_REG) begin 
 
-					if ((cfg_o_ready[1] && wb_suff)) 
+					if ((cfg_o_ready && wb_suff)) 
 						if (~wei_pending)
-							state <= CFG_RD_ST;
+							state <= FTM_FIFO_READ_ST;
+							// state <= CFG_RD_ST;
 					else if(~wb_full && ~wei_done) 
 						state <= WEI_INCR_ST;
 					else if (ftm_done_n_i && wei_done)
 						state <= INIT_ST;						
 				end
 
-			CFG_RD_ST:
-				if (cfg_o_ready[1]) 
-					state <= FTM_FIFO_READ_ST;
+			// CFG_RD_ST: // check cfg_ready of its downstream.
+			// 	if (cfg_o_ready[1]) 
+			// 		state <= FTM_FIFO_READ_ST;
 					
 			FTM_FIFO_READ_ST: 
-				state <= FTM_LATCH_ST;
+				// if (cfg_o_ready[0])
+					state <= FTM_LATCH_ST;
 
 			FTM_LATCH_ST:
 				state <= FTM_INCR_ST;
@@ -220,14 +218,13 @@ end
 			.incr_en  (wei_incr_st     ),
 			.mem_we   (mem_we          ),
 
-			.addr     (wei_addr_r      ),
-			.nbursts  (wei_n_bursts_r  ),
+			.addr     (wei_addr        ),
+			.nbursts  (wei_n_bursts    ),
 
 			.pending  (wei_pending     ),
 			.done     (wei_done        ),
 			.cu_sel   (wei_cu_sel      )
         );
-
 
     addr_gen
         #(
@@ -246,7 +243,8 @@ end
 			.incr_en  (ftm_incr_st  ),
 			.mem_we   (mem_we       ),
 
-	
+			.addr     (ftm_addr      ),
+			.nbursts  (ftm_n_bursts  ),
 
 			.pending  (ftm_pending ),
 			.done     (ftm_done    ),
@@ -265,22 +263,36 @@ genvar i;
 endgenerate 
 
 assign RSTART_REG  = wei_load_st | ftm_load_st;	 
-assign RADDR_REG   = (wei_load_st) ? wei_addr_r :
-					 (ftm_load_st) ? ftm_addr_r : 0;
-assign RNBURST_REG = (wei_load_st) ? wei_n_bursts_r :
-				     (ftm_load_st) ? ftm_n_bursts_r : 0; 
+assign RADDR_REG   = (wei_load_st) ? wei_addr :
+					 (ftm_load_st) ? ftm_addr : 0;
+assign RNBURST_REG = (wei_load_st) ? wei_n_bursts :
+				     (ftm_load_st) ? ftm_n_bursts : 0; 
+
+
+// 128-bits
+assign cfg_o_data  = {
+				// out_addr: 32-bits, out_shape: 32-bits.
+				cfg_i_data_r[178+:32], cfg_i_data_r[210+:32],
+
+				// n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits.
+				fifo_dout[57+:7], 
+				
+				// n_wrap_c1: 7-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits.
+				cfg_i_data_r[114+:25], cfg_i_data_r[82+:32]
+				
+				}; 
 
 
 
-// {fb_cfg, wb_cfg}
-	// fb_cfg == [n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits].
-	// wb_cfg == [n_wrap_c1: 7-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits].
-assign cfg_o_data  = {fifo_dout[57+:7], cfg_i_data_r[114+:25], cfg_i_data_r[82+:32]}; // 64-bits
-assign cfg_o_valid = (cfg_wr_st == 1'b1 && cfg_o_ready[0] == 1'b1) ? 2'b10 : 
-					 (cfg_rd_st == 1'b1 && cfg_o_ready[1] == 1'b1) ? 2'b01 :2'b00;
+// assign cfg_o_valid = (cfg_wr_st == 1'b1 || ftm_latch_st == 1'b1) ? 2'b10 : 
+// 					 (cfg_rd_st == 1'b1						   ) ? 2'b01 :2'b00;
+
+		
+
+	
+assign cfg_o_valid = (~init_st);
 
 assign cfg_i_ready = init_st;
-
 
 assign fifo_rd_en = ftm_fifo_read_st;
 

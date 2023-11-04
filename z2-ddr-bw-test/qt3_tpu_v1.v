@@ -242,9 +242,10 @@ module qt3_tpu_v1
 	wire           	cfg_i_valid ;
 	wire 		    cfg_i_ready ;
 
-	wire [63:0] 	cfg_o_data  				 ;
-	wire [1:0]      cfg_o_valid 				 ;
-	wire [1:0]  	cfg_o_ready [N_CONV_UNIT-1:0];
+	wire [127:0] 	       m0_cfg_data ;
+	wire 		           m0_cfg_valid;
+	wire 				   m0_cfg_ready;
+	// wire [N_CONV_UNIT-1:0] cfg_o_ready_i;
 
 	// wire [63:0]   conv_para   ;
 	// wire 		  conv_para_we;
@@ -349,9 +350,9 @@ module qt3_tpu_v1
 			.cfg_i_data      (cfg_i_data      ),
 			.cfg_i_ready     (cfg_i_ready     ),
 
-			.cfg_o_data      (cfg_o_data       ),
-			.cfg_o_valid     (cfg_o_valid      ),
-			.cfg_o_ready     (cfg_o_ready      ),
+			.cfg_o_data      (m0_cfg_data       ),
+			.cfg_o_valid     (m0_cfg_valid      ),
+			.cfg_o_ready     (m0_cfg_ready      ),
 
 			.fifo_empty    (fifo_ftm_empty  ),
 			.fifo_rd_en    (fifo_ftm_rd_en  ),
@@ -384,292 +385,323 @@ module qt3_tpu_v1
 
 
 
-generate
-genvar i;
-	for (i=0; i < N_CONV_UNIT; i=i+1) begin : GEN_CONV_UNIT
-
-		// Each with 4 groups of 4-DSP, 10 36kb-BRAM as weight buffer,  4 36kb-BRAM as kernel buffer.
-		// Each perform 16 muls per cycle.
-		// We need 8 such unit along channel dir.
-		conv_unit #(
-				.DATA_WIDTH(DATA_WIDTH),
-				.N_KERNEL  (N_KERNEL),
-				.N_CONV_UNIT(N_CONV_UNIT),
-				.ID (4*i)
-			)
-			conv_unit_i
-			(
-				// Together with c1 can allow the conv to know whether it is the last one
-					// in case c1 < N_CONV_UNIT * N_CONV_UNIT.	
-				.is_tail		(is_tail[i]		), 
-
-				.clk		    (aclk			),
-				.rstn         	(aresetn		),
-
-        		.pipe_en    	(pipe_en       ),
-        		.pipe_en_i  	(pipe_en_i[i]  ),
-        		.pipe_en_o  	(pipe_en_o[i]  ),
-
-				.cfg_i_data     (cfg_o_data       ),
-				.cfg_i_valid    (cfg_o_valid      ),
-				.cfg_i_ready    (cfg_o_ready_i[i]   ),
-
-				// TODO: implement clr logic to clear regs in 
-					// all conv_unit to be ready for next layer.
-				.wb_we          (wb_we[i]         ),
-				.wb_clr         (wb_clr[i]        ),
-				.wb_empty       (wb_empty[i]      ),
-				.wb_suff 		(wb_suff[i]  	  ),
-				.wb_full        (wb_full[i] 	  ),
-				.fb_we          (fb_we[i]         ),
-				.fb_clr         (fb_clr[i]        ),
-				.fb_empty       (fb_empty[i]      ),
-				.fb_suff  		(fb_suff[i]       ), // not needed?
-				.fb_full        (fb_full[i] 	  ),
-				.di             (mem_di           ),
-
-				.acc_i  		(acc_i[i]   	  ),
-				.acc_o  		(acc_o[i]   	  ),
-				.acc_o_valid  	(acc_o_valid[i]	  ) // only the last (not tail) conv_unit will be checked.
-			);
-		
-		// Only look at tail: if tail is sufficient, then all others are sufficient.
-		assign wb_suff_reduc[i] = (is_tail[i]) ? wb_suff[i] : 0;
-		assign fb_suff_reduc[i] = (is_tail[i]) ? fb_suff[i] : 0;
-
-		assign pipe_en_i[i] = (i==0) ? pipe_en   : pipe_en_o[i-1];
-        assign acc_i[i] 	= (i==0) ? 0 	     : acc_o[i-1];
-	end
-endgenerate 
-
-assign wb_suff_i = (wb_suff_reduc > 0) ? 1'b1 : 1'b0;
-assign fb_suff_i = (fb_suff_reduc > 0) ? 1'b1 : 1'b0;
-
-assign wb_full_i = |wb_full;
-assign fb_full_i = |fb_full;
-
-assign wb_empty_i = |wb_empty;
-assign fb_empty_i = |fb_empty;
 
 
-// TODO: not done implement.
-assign cfg_o_ready = cfg_o_ready_i[0];
+    cfg_prop
+        #(
+            .B    (128),             
+        )
+        cfg_prop_0_i
+        (
+            .clk  (clk	)	     ,    
+            .rstn (rstn)         ,     
 
+			.s_cfg_data  (m0_cfg_data  ), // 128-bits
+			.s_cfg_valid (m0_cfg_valid ),
+			.s_cfg_ready (m0_cfg_ready ),
 
-// TODO: allow using different shapes in writer and 
-	// reader of strided buffer to facilitate pre-load next layer.
-// ftm_n_wrap_c_acc	== fifo_ftm_dout[57+:7].
-// assign conv_para 	 = {fifo_ftm_dout[57+:7], cfg_data[114+:64]};
-// assign conv_para_we  = fifo_ftm_rd_en | (cfg_valid & cfg_ready);
+			.m_cfg_done	 (m1_cfg_done  ),
+			.m_cfg_run	 (m1_cfg_run   ),
+			.m_cfg_data  (m1_cfg_data  ), // 128-bits
+			.m_cfg_valid (m1_cfg_valid ),
+			.m_cfg_ready (m1_cfg_ready )
+        );
 
- 
+	generate
+	genvar i;
+		for (i=0; i < N_CONV_UNIT; i=i+1) begin : GEN_CONV_UNIT
 
-// TODO: write output data directly back to fb BRAM until fb BRAM run out of space.
-activation_unit #(
-		.N_KERNEL(N_KERNEL),
-		.B_PIXEL (B_PIXEL)
-	)
-	activation_unit_i
-	(
-		.clk		    (aclk			    ),
-		.rstn         	(aresetn	        ),
+			// Each with 4 groups of 4-DSP, 10 36kb-BRAM as weight buffer,  4 36kb-BRAM as kernel buffer.
+			// Each perform 16 muls per cycle.
+			// We need 8 such unit along channel dir.
+			conv_unit #(
+					.DATA_WIDTH(DATA_WIDTH),
+					.N_KERNEL  (N_KERNEL),
+					.N_CONV_UNIT(N_CONV_UNIT),
+					.ID (4*i)
+				)
+				conv_unit_i
+				(
+					// Together with c1 can allow the conv to know whether it is the last one
+						// in case c1 < N_CONV_UNIT * N_CONV_UNIT.	
+					.is_tail		(is_tail[i]		), 
 
-		.pipe_en		(pipe_en			),
+					.clk		    (aclk			),
+					.rstn         	(aresetn		),
 
-		.type           (act_func           ),
+					.pipe_en    	(pipe_en       ),
+					.pipe_en_i  	(pipe_en_i[i]  ),
+					.pipe_en_o  	(pipe_en_o[i]  ),
 
-		.di             (acc_o		[N_CONV_UNIT-1]),
-		.di_valid	    (acc_o_valid[N_CONV_UNIT-1]),
+					.cfg_wr_data    (m0_cfg_data[63:0]), 
+					.cfg_rd_data    (m1_cfg_data     ),
+					.cfg_rd_done	(m1_cfg_done_i[i] 	)
+					.cfg_rd_run 	(m1_cfg_run     )
 
-		.do				(act_do		   			),
-		.do_valid		(act_do_vaild  			)
-	);
-      
+					// TODO: implement clr logic to clear regs in 
+						// all conv_unit to be ready for next layer.
+					.wb_we          (wb_we[i]         ),
+					// .wb_clr         (wb_clr[i]        ),
+					// .wb_empty       (wb_empty[i]      ),
+					.wb_suff 		(wb_suff[i]  	  ),
+					.wb_full        (wb_full[i] 	  ),
 
-assign act_func  = cfg_i_data[2:0];
+					.fb_we          (fb_we[i]         ),
+					// .fb_clr         (fb_clr[i]        ),
+					// .fb_empty       (fb_empty[i]      ),
+					.fb_suff  		(fb_suff[i]       ), // not needed?
+					.fb_full        (fb_full[i] 	  ),
+					.di             (mem_di           ),
 
+					.acc_i  		(acc_i[i]   	  ),
+					.acc_o  		(acc_o[i]   	  ),
+					.acc_o_valid  	(acc_o_valid[i]	  ) // only the last (not tail) conv_unit will be checked.
+				);
+			
+			// Only look at tail: if tail is sufficient, then all others are sufficient.
+			assign wb_suff_reduc[i] = (is_tail[i]) ? wb_suff[i] : 0;
+			assign fb_suff_reduc[i] = (is_tail[i]) ? fb_suff[i] : 0;
 
+			assign pipe_en_i[i] = (i==0) ? pipe_en   : pipe_en_o[i-1];
+			assign acc_i[i] 	= (i==0) ? 0 	     : acc_o[i-1];
+		end
+	endgenerate 
 
-// Whether to cache on BRAM or not, need always write a copy to ddr, since 
-	// they may be used several time in different layers.
-// Need to do a lot of addr compute works.
-ddr_writer
-    #(
-		.N_KERNEL(N_KERNEL),
-		.B_PIXEL (B_PIXEL),
-		.DATA_WIDTH (DATA_WIDTH),
-		.N_DSP_GROUP (N_DSP_GROUP)
-    )
-    ddr_writer_i
-	( 
-        .clk    		(aclk			),
-		.rstn			(aresetn		),
+	assign wb_suff_i = (wb_suff_reduc > 0) ? 1'b1 : 1'b0;
+	assign fb_suff_i = (fb_suff_reduc > 0) ? 1'b1 : 1'b0;
 
-		.pipe_en		(pipe_en			),
+	assign wb_full_i = |wb_full;
+	assign fb_full_i = |fb_full;
 
-		.base_addr	 	(out_addr       ),
-		.shape			(out_shape      ),
+	assign m1_cfg_done = |m1_cfg_done_i;
 
-		// Input data.
-        .ddr_valid         (act_do_vaild   ),
-        .ddr_data          (act_do         ),
-		.ddr_ready         (          ),
+	// TODO: write output data directly back to fb BRAM until fb BRAM run out of space.
+	activation_unit #(
+			.N_KERNEL(N_KERNEL),
+			.B_PIXEL (B_PIXEL)
+		)
+		activation_unit_i
+		(
+			.clk		    (aclk			    ),
+			.rstn         	(aresetn	        ),
 
+			.pipe_en		(pipe_en			),
 
-		// AXIS Slave.
-		.m_axis_tdata 	(s_axis_tdata ),
-		.m_axis_tvalid	(s_axis_tvalid ),
-		.m_axis_tready	(s_axis_tready )
-    );
+			.type           (act_func           ),
 
-assign out_addr 		 = cfg_i_data[178+:32];
-assign out_shape 		 = cfg_i_data[210+:32];
+			.di             (acc_o		[N_CONV_UNIT-1]),
+			.di_valid	    (acc_o_valid[N_CONV_UNIT-1]),
 
-
-assign pipe_en = s_axis_tready & (wb_suff_i) & (fb_suff_i);
-
-
-// unified_buffer #(
-
-// 	)
-// 	unified_buffer_i
-// 	(
-// 		.clk		    (aclk			),
-// 		.rstn         	(aresetn		),
-
-		
-// 	);
-
-
-// pool_unit #(
-
-// 	)
-// 	pool_unit_i
-// 	(
-// 		.clk		    (aclk			),
-// 		.rstn         	(aresetn		),
-
-		
-// 	);
-
-
-// // has state machine.
-// // has 40 36kb-BRAM.
-// accumulator #(
-
-// 	)
-// 	accumulator_i
-// 	(
-// 		.clk		    (aclk			),
-// 		.rstn         	(aresetn		),
-
-		
-// 	);
-
-
-
-axi_mst
-	#(
-		// Parameters of AXI Master I/F.
-		
-		.ID_WIDTH				(ID_WIDTH				),
-		.DATA_WIDTH				(DATA_WIDTH				),
-		.BURST_LENGTH			(BURST_LENGTH		    ),
-		.B_BURST_LENGTH (B_BURST_LENGTH)
-	)
-	axi_mst_i
-	(
-	
-		/**************/
-		/* AXI Master */
-		/**************/
-
-		// Reset and Clock.
-		.m_axi_aclk		(aclk			),
-		.m_axi_aresetn	(aresetn		),
-
-		// Write Address Channel.
-		.m_axi_awid		(m_axi_awid		),
-		.m_axi_awaddr	(m_axi_awaddr	),
-		.m_axi_awlen	(m_axi_awlen	),
-		.m_axi_awsize	(m_axi_awsize	),
-		.m_axi_awburst	(m_axi_awburst	),
-		.m_axi_awlock	(m_axi_awlock	),
-		.m_axi_awcache	(m_axi_awcache	),
-		.m_axi_awprot	(m_axi_awprot	),
-		.m_axi_awqos	(m_axi_awqos	),
-		.m_axi_awvalid	(m_axi_awvalid	),
-		.m_axi_awready	(m_axi_awready	),
-
-		// Write Data Channel.
-		.m_axi_wid      (m_axi_wid      ),
-		.m_axi_wdata	(m_axi_wdata	),
-		.m_axi_wstrb	(m_axi_wstrb	),
-		.m_axi_wlast	(m_axi_wlast	),
-		.m_axi_wvalid	(m_axi_wvalid	),
-		.m_axi_wready	(m_axi_wready	),
-
-		// Write Response Channel.
-		.m_axi_bid		(m_axi_bid		),
-		.m_axi_bresp	(m_axi_bresp	),
-		.m_axi_bvalid	(m_axi_bvalid	),
-		.m_axi_bready	(m_axi_bready	),
-
-		// Read Address Channel.
-		.m_axi_arid		(m_axi_arid		),
-		.m_axi_araddr	(m_axi_araddr	),
-		.m_axi_arlen	(m_axi_arlen	),
-		.m_axi_arsize	(m_axi_arsize	),
-		.m_axi_arburst	(m_axi_arburst	),
-		.m_axi_arlock	(m_axi_arlock	),
-		.m_axi_arcache	(m_axi_arcache	),
-		.m_axi_arprot	(m_axi_arprot	),
-		.m_axi_arqos	(m_axi_arqos	),
-		.m_axi_arvalid	(m_axi_arvalid	),
-		.m_axi_arready	(m_axi_arready	),
-
-		// Read Data Channel.
-		.m_axi_rid		(m_axi_rid		),
-		.m_axi_rdata	(m_axi_rdata	),
-		.m_axi_rresp	(m_axi_rresp	),
-		.m_axi_rlast	(m_axi_rlast	),
-		.m_axi_rvalid	(m_axi_rvalid	),
-		.m_axi_rready	(m_axi_rready	),
-
-		/*************************/
-		/* AXIS Master Interfase */
-		/*************************/
-		// from axi_mst_read.
-		.m_axis_tvalid	(m_axis_tvalid	),
-		.m_axis_tdata	(m_axis_tdata	),
-		.m_axis_tstrb	(m_axis_tstrb	),
-		.m_axis_tlast	(m_axis_tlast	),
-		.m_axis_tready	(m_axis_tready	),
-
-		/************************/
-		/* AXIS Slave Interfase */
-		/************************/
-		// from axi_mst_write.
-		.s_axis_tready	(s_axis_tready	),
-		.s_axis_tdata	(s_axis_tdata	),
-		.s_axis_tstrb	(s_axis_tstrb	),
-		.s_axis_tlast	(s_axis_tlast	),
-		.s_axis_tvalid	(s_axis_tvalid	),
-
-		// Registers.
-		.RSTART_REG		(RSTART_REG		),
-		.RADDR_REG		(RADDR_REG		),
-		.RNBURST_REG	(RNBURST_REG	),
-		.RIDLE_REG      (RDONE_REG      ),
-
-		.WSTART_REG		(WSTART_REG		),
-		.WADDR_REG		(WADDR_REG		),
-		.WNBURST_REG	(WNBURST_REG	),
-		.WIDLE_REG  	(WIDLE_REG	    )
+			.do				(act_do		   			),
+			.do_valid		(act_do_vaild  			)
+		);
 		
 
-		// .probe (probe)
-	);
+	assign act_func  = cfg_i_data[2:0];
+
+
+
+    cfg_prop
+        #(
+			.B    (64),
+        )
+        cfg_prop_1_i
+        (
+            .clk  (clk	)	     ,    
+            .rstn (rstn )        ,     
+
+			.s_cfg_data  (m1_cfg_data[64+:64] ), // 64-bits
+			.s_cfg_valid (m1_cfg_valid 		  ),
+			.s_cfg_ready (m1_cfg_ready 		  ),
+
+			.m_cfg_done  (m2_cfg_done	    ),
+			.m_cfg_run	 (m2_cfg_run		),
+			.m_cfg_data  (m2_cfg_data       ),
+			.m_cfg_valid (    		        ),
+			.m_cfg_ready (1'b1		        )
+        );
+
+	// Whether to cache on BRAM or not, need always write a copy to ddr, since 
+		// they may be used several time in different layers.
+	// Need to do a lot of addr compute works.
+	ddr_writer
+		#(
+			.N_KERNEL(N_KERNEL),
+			.B_PIXEL (B_PIXEL),
+			.DATA_WIDTH (DATA_WIDTH),
+			.N_DSP_GROUP (N_DSP_GROUP)
+		)
+		ddr_writer_i
+		( 
+			.clk    		(aclk				 ),
+			.rstn			(aresetn			 ),
+
+			.pipe_en		(pipe_en			 ),
+
+			.cfg_data  		(m2_cfg_data   		 ),
+			.cfg_done 	    (m2_cfg_done	 	 ),
+			.cfg_run	    (m2_cfg_run 	 	 ),
+
+			// Input data.
+			.ddr_valid         (act_do_vaild   ),
+			.ddr_data          (act_do         ),
+			.ddr_ready         (               ),
+
+			// AXIS Slave.
+			.m_axis_tdata 	(s_axis_tdata ),
+			.m_axis_tvalid	(s_axis_tvalid ),
+			.m_axis_tready	(s_axis_tready )
+		);
+
+
+
+	assign pipe_en = s_axis_tready & (wb_suff_i) & (fb_suff_i);
+
+
+
+
+
+	// unified_buffer #(
+
+	// 	)
+	// 	unified_buffer_i
+	// 	(
+	// 		.clk		    (aclk			),
+	// 		.rstn         	(aresetn		),
+
+			
+	// 	);
+
+
+	// pool_unit #(
+
+	// 	)
+	// 	pool_unit_i
+	// 	(
+	// 		.clk		    (aclk			),
+	// 		.rstn         	(aresetn		),
+
+			
+	// 	);
+
+
+	// // has state machine.
+	// // has 40 36kb-BRAM.
+	// accumulator #(
+
+	// 	)
+	// 	accumulator_i
+	// 	(
+	// 		.clk		    (aclk			),
+	// 		.rstn         	(aresetn		),
+
+			
+	// 	);
+
+
+
+	axi_mst
+		#(
+			// Parameters of AXI Master I/F.
+			
+			.ID_WIDTH				(ID_WIDTH				),
+			.DATA_WIDTH				(DATA_WIDTH				),
+			.BURST_LENGTH			(BURST_LENGTH		    ),
+			.B_BURST_LENGTH (B_BURST_LENGTH)
+		)
+		axi_mst_i
+		(
+		
+			/**************/
+			/* AXI Master */
+			/**************/
+
+			// Reset and Clock.
+			.m_axi_aclk		(aclk			),
+			.m_axi_aresetn	(aresetn		),
+
+			// Write Address Channel.
+			.m_axi_awid		(m_axi_awid		),
+			.m_axi_awaddr	(m_axi_awaddr	),
+			.m_axi_awlen	(m_axi_awlen	),
+			.m_axi_awsize	(m_axi_awsize	),
+			.m_axi_awburst	(m_axi_awburst	),
+			.m_axi_awlock	(m_axi_awlock	),
+			.m_axi_awcache	(m_axi_awcache	),
+			.m_axi_awprot	(m_axi_awprot	),
+			.m_axi_awqos	(m_axi_awqos	),
+			.m_axi_awvalid	(m_axi_awvalid	),
+			.m_axi_awready	(m_axi_awready	),
+
+			// Write Data Channel.
+			.m_axi_wid      (m_axi_wid      ),
+			.m_axi_wdata	(m_axi_wdata	),
+			.m_axi_wstrb	(m_axi_wstrb	),
+			.m_axi_wlast	(m_axi_wlast	),
+			.m_axi_wvalid	(m_axi_wvalid	),
+			.m_axi_wready	(m_axi_wready	),
+
+			// Write Response Channel.
+			.m_axi_bid		(m_axi_bid		),
+			.m_axi_bresp	(m_axi_bresp	),
+			.m_axi_bvalid	(m_axi_bvalid	),
+			.m_axi_bready	(m_axi_bready	),
+
+			// Read Address Channel.
+			.m_axi_arid		(m_axi_arid		),
+			.m_axi_araddr	(m_axi_araddr	),
+			.m_axi_arlen	(m_axi_arlen	),
+			.m_axi_arsize	(m_axi_arsize	),
+			.m_axi_arburst	(m_axi_arburst	),
+			.m_axi_arlock	(m_axi_arlock	),
+			.m_axi_arcache	(m_axi_arcache	),
+			.m_axi_arprot	(m_axi_arprot	),
+			.m_axi_arqos	(m_axi_arqos	),
+			.m_axi_arvalid	(m_axi_arvalid	),
+			.m_axi_arready	(m_axi_arready	),
+
+			// Read Data Channel.
+			.m_axi_rid		(m_axi_rid		),
+			.m_axi_rdata	(m_axi_rdata	),
+			.m_axi_rresp	(m_axi_rresp	),
+			.m_axi_rlast	(m_axi_rlast	),
+			.m_axi_rvalid	(m_axi_rvalid	),
+			.m_axi_rready	(m_axi_rready	),
+
+			/*************************/
+			/* AXIS Master Interfase */
+			/*************************/
+			// from axi_mst_read.
+			.m_axis_tvalid	(m_axis_tvalid	),
+			.m_axis_tdata	(m_axis_tdata	),
+			.m_axis_tstrb	(m_axis_tstrb	),
+			.m_axis_tlast	(m_axis_tlast	),
+			.m_axis_tready	(m_axis_tready	),
+
+			/************************/
+			/* AXIS Slave Interfase */
+			/************************/
+			// from axi_mst_write.
+			.s_axis_tready	(s_axis_tready	),
+			.s_axis_tdata	(s_axis_tdata	),
+			.s_axis_tstrb	(s_axis_tstrb	),
+			.s_axis_tlast	(s_axis_tlast	),
+			.s_axis_tvalid	(s_axis_tvalid	),
+
+			// Registers.
+			.RSTART_REG		(RSTART_REG		),
+			.RADDR_REG		(RADDR_REG		),
+			.RNBURST_REG	(RNBURST_REG	),
+			.RIDLE_REG      (RDONE_REG      ),
+
+			.WSTART_REG		(WSTART_REG		),
+			.WADDR_REG		(WADDR_REG		),
+			.WNBURST_REG	(WNBURST_REG	),
+			.WIDLE_REG  	(WIDLE_REG	    )
+			
+
+			// .probe (probe)
+		);
 
 
 

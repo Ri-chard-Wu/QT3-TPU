@@ -41,10 +41,12 @@ module conv_unit
         input wire                     clk    ,    
         input wire                     rstn    ,     
         
-        input  wire [63:0]           cfg_i_data ,
-        input  wire [1:0]            cfg_i_valid,
-        output wire [1:0]	         cfg_i_ready,
 
+        input  wire [63:0]           cfg_wr_data ,
+
+        input  wire [63:0]           cfg_rd_data,
+        output wire                  cfg_rd_done	    ,
+        input  wire                  cfg_rd_run     ,
 
         input wire                   wb_we    ,
         input wire                   wb_clr   ,
@@ -69,12 +71,7 @@ module conv_unit
     localparam N_BUF_ENTRIES = 512;
 
 
-    localparam WAIT_CFG_ST = 0;
-    localparam RUN_ST      = 1;
-    reg  [1:0] state [0:1]   ;
-    reg  [1:0] wait_cfg_st   ;
-    reg  [1:0] run_st        ;
-    wire [1:0] last          ;
+ 
     reg  [6:0] c2_cnt_r [0:1];
 
 
@@ -113,7 +110,6 @@ module conv_unit
     wire [B_COORD-1:0] c_i [0:1];
     wire [B_COORD-1:0] y_i [0:1];
     wire [B_COORD-1:0] x_i [0:1];
-    wire [1:0] done_ld;
 
     wire [N_KERNEL:0] wb_tog;
 
@@ -137,8 +133,7 @@ module conv_unit
             // for (i=0; i<2; i=i+1) 
             //     if (cfg_i_valid[i]) begin
                     
-            //         cfg_data_r [i] <= cfg_i_data;
-            //         cfg_i_ready[i] <= 1'b0; 
+            //       
             //     end
         end
     end    
@@ -212,81 +207,68 @@ module conv_unit
 
 
 
-    assign last[0] = wb_wr_last[N_KERNEL-1];
-    assign last[1] = fb_rd_last;
+    // #####################
+    // # wr
+    // #####################
+    assign wcfg[0] = cfg_wr_data[0+:32];
+    assign fcfg[0] = cfg_wr_data[32+:32];
+
+    // wcfg: n_wrap_c2: 7-bits, n_wrap_c1: 7-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits
+    assign wcfg_stride      [0]        = wcfg[0][1:0]  ;
+    assign wcfg_pad         [0]        = wcfg[0][3:2]  ;
+    assign wcfg_shape       [0][0+:9]  = wcfg[0][5:4]  ; // w
+    assign wcfg_shape       [0][9+:9]  = wcfg[0][7:6]  ; // h
+    assign wcfg_shape       [0][18+:7] = wcfg[0][8+:7] ; // n_wrap_c1
+    assign wcfg_n_wrap_c1   [0]        = wcfg[0][8+:7] ; // n_wrap_c1 == c1 / (4*N_CONV_UNIT).
+    assign wcfg_n_wrap_c2   [0]        = wcfg[0][15+:7]; // n_wrap_c2 == c2 / N_KERNEL.
+
+    // fcfg: n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits.
+    assign fcfg_shape       [0][0+:9]  = fcfg[0][0+:9] ; // w
+    assign fcfg_shape       [0][9+:9]  = fcfg[0][9+:9] ; // h
+    assign fcfg_shape       [0][18+:7] = fcfg[0][25+:7]; // n_wrap_c (of each particular ftm).
+    assign fcfg_n_wrap_c_sum[0]        = fcfg[0][18+:7]; // n_wrap_c_sum
+
+
+
+    // #####################
+    // # rd
+    // #####################
+    always @( posedge clk )
+    begin
+        if ( rstn == 1'b0 ) begin
+
+        end 
+        else begin    
+
+            if (~cfg_rd_run)
+                c2_cnt_r    <= 0;
+            else
+                if (fb_rd_last) 
+                    c2_cnt_r <= c2_cnt_r + 1;
+        end
+    end    
+
+    assign cfg_rd_done = (c2_cnt_r == wcfg_n_wrap_c2[1]);
+
+    assign wcfg[1] = cfg_rd_data[0+:32];
+    assign fcfg[1] = cfg_rd_data[32+:32];
+
+    // wcfg: n_wrap_c2: 7-bits, n_wrap_c1: 7-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits
+    assign wcfg_stride      [1]        = wcfg[1][1:0]  ;
+    assign wcfg_pad         [1]        = wcfg[1][3:2]  ;
+    assign wcfg_shape       [1][0+:9]  = wcfg[1][5:4]  ; // w
+    assign wcfg_shape       [1][9+:9]  = wcfg[1][7:6]  ; // h
+    assign wcfg_shape       [1][18+:7] = wcfg[1][8+:7] ; // n_wrap_c1
+    assign wcfg_n_wrap_c1   [1]        = wcfg[1][8+:7] ; // n_wrap_c1 == c1 / (4*N_CONV_UNIT).
+    assign wcfg_n_wrap_c2   [1]        = wcfg[1][15+:7]; // n_wrap_c2 == c2 / N_KERNEL.
+
+    // fcfg: n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits.
+    assign fcfg_shape       [1][0+:9]  = fcfg[1][0+:9] ; // w
+    assign fcfg_shape       [1][9+:9]  = fcfg[1][9+:9] ; // h
+    assign fcfg_shape       [1][18+:7] = fcfg[1][25+:7]; // n_wrap_c (of each particular ftm).
+    assign fcfg_n_wrap_c_sum[1]        = fcfg[1][18+:7]; // n_wrap_c_sum
 
     assign cfg_i_ready = wait_cfg_st;
-
-
-    generate
-    genvar k;
-
-        for (k=0; k < 2; k=k+1) begin
-
-            always @( posedge clk )
-            begin
-                if ( rstn == 1'b0 ) begin
-
-                    state[k]	<= WAIT_CFG_ST;
-                end 
-                else begin    
-
-                    case(state[k])
-                        WAIT_CFG_ST:
-                            if (cfg_i_valid[k])
-                                state[k] <= RUN_ST;
-                        RUN_ST:
-                            if(c2_cnt_r[k] == wcfg_n_wrap_c2[k])
-                                state[k] <= WAIT_CFG_ST;
-                    endcase	
-
-                    if (wait_cfg_st[k])
-                        c2_cnt_r[k]    <= 0;
-                    else if (run_st[k])
-                        if (last[k]) 
-                            c2_cnt_r[k] <= c2_cnt_r[k] + 1;
-
-                    if (wait_cfg_st[k] && cfg_i_valid[k]) 
-                        cfg_data_r[k] <= cfg_i_data;
-                end
-            end    
-
-
-            always @(state[k]) begin
-
-                wait_cfg_st[k]	  = 0;
-                run_st[k]         = 0;
-            
-                case (state[k])
-
-                    WAIT_CFG_ST:
-                        wait_cfg_st[k]  = 1;
-
-                    RUN_ST:
-                        run_st[k]       = 1;
-                endcase
-            end
-
-            
-            assign wcfg[k] = cfg_data_r[k][0+:32];
-            assign fcfg[k] = cfg_data_r[k][32+:32];
-
-            // wcfg: n_wrap_c2: 7-bits, n_wrap_c1: 7-bits, h: 2-bits, w: 2-bits, pad: 2-bits, stride: 2-bits
-            assign wcfg_stride      [k]        = wcfg[k][1:0]  ;
-            assign wcfg_pad         [k]        = wcfg[k][3:2]  ;
-            assign wcfg_shape       [k][0+:9]  = wcfg[k][5:4]  ; // w
-            assign wcfg_shape       [k][9+:9]  = wcfg[k][7:6]  ; // h
-            assign wcfg_shape       [k][18+:7] = wcfg[k][8+:7] ; // n_wrap_c1
-            assign wcfg_n_wrap_c1   [k]        = wcfg[k][8+:7] ; // n_wrap_c1 == c1 / (4*N_CONV_UNIT).
-            assign wcfg_n_wrap_c2   [k]        = wcfg[k][15+:7]; // n_wrap_c2 == c2 / N_KERNEL.
-
-            // fcfg: n_wrap_c: 7-bits, n_wrap_c_sum: 7-bits, h: 9-bits, w: 9-bits.
-            assign fcfg_shape       [k][0+:9]  = fcfg[k][0+:9] ; // w
-            assign fcfg_shape       [k][9+:9]  = fcfg[k][9+:9] ; // h
-            assign fcfg_shape       [k][18+:7] = fcfg[k][25+:7]; // n_wrap_c (of each particular ftm).
-            assign fcfg_n_wrap_c_sum[k]        = fcfg[k][18+:7]; // n_wrap_c_sum
-        end
-    endgenerate 
 
 
 
@@ -313,7 +295,7 @@ module conv_unit
 
             .wr_en   (fb_we     ),
             .wr_di   (di        ),
-            .wr_last (),
+            .wr_last (fb_wr_last),
             .wr_ptr  (fb_wptr   ), 
             .wr_base (          )        
             .wr_tog  (          ),
